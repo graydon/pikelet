@@ -1,6 +1,14 @@
+use std::fmt;
+
 /// The name of a free variable
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Name(pub String);
+
+impl fmt::Display for Name {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 /// A type annotated with a name for debugging purposes
 ///
@@ -26,6 +34,12 @@ impl<T: PartialEq> PartialEq for Named<T> {
 /// [debruijn index]: https://en.wikipedia.org/wiki/De_Bruijn_index
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct Debruijn(pub u32);
+
+impl fmt::Display for Debruijn {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Debruijn {
     /// The debruijn index of the current binder
@@ -59,6 +73,15 @@ impl Var {
         match *self {
             Var::Bound(Named(_, b)) if b == level => true,
             Var::Bound(_) | Var::Free(_) => false,
+        }
+    }
+}
+
+impl fmt::Display for Var {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Var::Bound(Named(ref name, ref b)) if f.alternate() => write!(f, "{}#{}", name, b),
+            Var::Bound(Named(ref name, _)) | Var::Free(ref name) => write!(f, "{}", name),
         }
     }
 }

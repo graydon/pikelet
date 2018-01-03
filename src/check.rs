@@ -1,7 +1,9 @@
 //! Contexts and type checking
 
+use std::fmt;
 use std::rc::Rc;
 
+use Derivation;
 use core::{CTerm, EvalError, ITerm, Type, Value};
 use var::{Debruijn, Name, Named, Var};
 
@@ -38,6 +40,20 @@ impl Default for Context<'static> {
     }
 }
 
+impl<'a> fmt::Display for Context<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Context::Nil => write!(f, "∅"),
+            Context::Cons(ref parent, ref term) => {
+                fmt::Display::fmt(parent, f)?;
+                write!(f, ", (")?;
+                fmt::Display::fmt(term, f)?;
+                write!(f, ")")
+            }
+        }
+    }
+}
+
 impl<'a> Context<'a> {
     pub fn extend(&'a self, value: Rc<Value>) -> Context<'a> {
         Context::Cons(self, value)
@@ -52,88 +68,144 @@ impl<'a> Context<'a> {
     }
 
     /// Check that the type of an expression is compatible with the expected type
-    pub fn check(&self, expr: &CTerm, expected_ty: &Type) -> Result<(), TypeError> {
-        match *expr {
-            CTerm::Inf(ref inf_expr) => match self.infer(inf_expr)? {
-                // Ensure that the inferred type matches the expected type
-                ref inf_ty if &**inf_ty == expected_ty => Ok(()),
-                inf_ty => Err(TypeError::Mismatch {
-                    expr: inf_expr.clone(),
-                    found: inf_ty,
-                    expected: Rc::new(expected_ty.clone()),
-                }),
-            },
+    pub fn check(&self, expr: &CTerm, expected_ty: &Type) -> Result<Derivation, TypeError> {
+        let (rule, premises) = match *expr {
+            CTerm::Inf(ref inf_expr) => {
+                let (inf_ty, premise) = self.infer(inf_expr)?;
+
+                if &*inf_ty == expected_ty {
+                    ("INF", vec![premise])
+                } else {
+                    return Err(TypeError::Mismatch {
+                        expr: inf_expr.clone(),
+                        found: inf_ty,
+                        expected: Rc::new(expected_ty.clone()),
+                    });
+                }
+            }
             CTerm::Lam(_, ref body_expr) => match *expected_ty {
                 Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
-                    self.extend(param_ty.clone()).check(body_expr, ret_ty)
+                    let premise = self.extend(param_ty.clone()).check(body_expr, ret_ty)?;
+                    ("LAM", vec![premise])
                 }
-                _ => Err(TypeError::ExpectedFunction {
-                    lam_expr: Rc::new(expr.clone()),
-                    expected: Rc::new(expected_ty.clone()),
-                }),
+                _ => {
+                    return Err(TypeError::ExpectedFunction {
+                        lam_expr: Rc::new(expr.clone()),
+                        expected: Rc::new(expected_ty.clone()),
+                    })
+                }
             },
-        }
+        };
+
+        Ok(Derivation {
+            judgement: "CHECK",
+            rule,
+            conclusion: format!(
+                "{:#}  ├─  ({:#})  :↓  ({:#})",
+                self, expr, expected_ty
+            ),
+            premises,
+        })
     }
 
-    pub fn infer(&self, expr: &ITerm) -> Result<Rc<Type>, TypeError> {
-        match *expr {
+    pub fn infer(&self, expr: &ITerm) -> Result<(Rc<Type>, Derivation), TypeError> {
+        let (rule, premises, out_ty) = match *expr {
             ITerm::Ann(ref expr, ref ty) => {
                 // Check that the type is actually at the type level
-                self.check(ty, &Value::Type)?;
+                let ty_premise = self.check(ty, &Value::Type)?;
                 // Simplify the type
-                let simp_ty = ty.eval()?;
+                let (simp_ty, simp_ty_premise) = ty.eval()?;
                 // Ensure that the type of the expression is compatible with the
                 // simplified annotation
-                self.check(expr, &simp_ty)?;
-                Ok(simp_ty)
+                let expr_premise = self.check(expr, &simp_ty)?;
+
+                (
+                    "ANN",
+                    vec![ty_premise, expr_premise, simp_ty_premise],
+                    simp_ty,
+                )
             }
-            ITerm::Type => Ok(Rc::new(Value::Type)),
+            ITerm::Type => ("TYPE", vec![], Rc::new(Value::Type)),
             ITerm::Lam(Named(ref param_name, ref param_ty), ref body_expr) => {
                 // Check that the parameter type is at the type level
-                self.check(param_ty, &Value::Type)?;
+                let param_premise = self.check(param_ty, &Value::Type)?;
                 // Simplify the parameter type
-                let simp_param_ty = param_ty.eval()?;
+                let (simp_param_ty, simp_param_ty_premise) = param_ty.eval()?;
                 // Infer the body of the lambda
-                let body_ty = self.extend(simp_param_ty.clone()).infer(body_expr)?;
+                let (body_ty, body_premise) = self.extend(simp_param_ty.clone()).infer(body_expr)?;
 
-                Ok(Rc::new(Value::Pi(
-                    Named(param_name.clone(), simp_param_ty),
-                    body_ty, // shift??
-                )))
+                (
+                    "LAM",
+                    vec![param_premise, simp_param_ty_premise, body_premise],
+                    Rc::new(Value::Pi(
+                        Named(param_name.clone(), simp_param_ty),
+                        body_ty, // shift??
+                    )),
+                )
             }
             ITerm::Pi(Named(_, ref param_ty), ref body_ty) => {
                 // Check that the parameter type is at the type level
-                self.check(param_ty, &Value::Type)?;
+                let param_premise = self.check(param_ty, &Value::Type)?;
                 // Simplify the parameter type
-                let simp_param_ty = param_ty.eval()?;
+                let (simp_param_ty, simp_param_ty_premise) = param_ty.eval()?;
                 // Ensure that the body of the pi type is also a type when the
                 // parameter is added to the context
-                self.extend(simp_param_ty).check(body_ty, &Value::Type)?;
+                let body_premise = self.extend(simp_param_ty).check(body_ty, &Value::Type)?;
+
                 // If this is true, the type of the pi type is also a type
-                Ok(Rc::new(Value::Type))
+                (
+                    "PI",
+                    vec![param_premise, simp_param_ty_premise, body_premise],
+                    Rc::new(Value::Type),
+                )
             }
-            ITerm::Var(Var::Bound(Named(_, b))) => {
-                Ok(self.lookup(b).expect("ICE: index out of bounds").clone())
-            }
-            ITerm::Var(Var::Free(ref name)) => Err(TypeError::UnboundVariable(name.clone())),
+            ITerm::Var(ref var) => match *var {
+                Var::Bound(Named(_, b)) => (
+                    "VAR",
+                    vec![
+                        Derivation {
+                            judgement: "CONTEXT",
+                            rule: "CONS",
+                            premises: vec![],
+                            conclusion: format!("{:#} ∈ {:#}", var, self),
+                        },
+                    ],
+                    self.lookup(b).expect("ICE: index out of bounds").clone(),
+                ),
+                Var::Free(ref name) => return Err(TypeError::UnboundVariable(name.clone())),
+            },
             ITerm::App(ref fn_expr, ref arg_expr) => {
-                let fn_type = self.infer(fn_expr)?;
+                let (fn_type, fn_premise) = self.infer(fn_expr)?;
                 match *fn_type {
                     Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
                         // Check that the type of the argument matches the
                         // expected type of the parameter
-                        self.check(arg_expr, param_ty)?;
+                        let pi_premise = self.check(arg_expr, param_ty)?;
                         // Simplify the argument
-                        let simp_arg_expr = arg_expr.eval()?;
+                        let (simp_arg_expr, simp_arg_expr_premise) = arg_expr.eval()?;
                         // Apply the argument to the body of the pi type
-                        let body_ty = Value::instantiate0(ret_ty, &simp_arg_expr)?;
-                        Ok(body_ty)
+                        (
+                            "APP",
+                            vec![fn_premise, pi_premise, simp_arg_expr_premise],
+                            Value::instantiate0(ret_ty, &simp_arg_expr)?,
+                        )
                     }
                     // TODO: More error info
-                    _ => Err(TypeError::IllegalApplication),
+                    _ => {
+                        return Err(TypeError::IllegalApplication);
+                    }
                 }
             }
-        }
+        };
+
+        let derivation = Derivation {
+            judgement: "INFER",
+            rule,
+            conclusion: format!("{:#}  ├─  ({:#})  :↑  ({:#})", self, expr, out_ty),
+            premises,
+        };
+
+        Ok((out_ty, derivation))
     }
 }
 
@@ -179,8 +251,8 @@ mod tests {
             let x = Name(String::from("x"));
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)),
-                Err(TypeError::UnboundVariable(x)),
+                ctx.infer(&parse(given_expr)).unwrap_err(),
+                TypeError::UnboundVariable(x),
             );
         }
 
@@ -190,10 +262,12 @@ mod tests {
             let given_expr = r"Type";
             let expected_ty = r"Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -202,10 +276,12 @@ mod tests {
             let given_expr = r"(\a, a) : Type -> Type";
             let expected_ty = r"Type -> Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -214,10 +290,12 @@ mod tests {
             let given_expr = r"(\a, a) : (Type -> Type) -> (Type -> Type)";
             let expected_ty = r"(Type -> Type) -> (Type -> Type)";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -237,10 +315,12 @@ mod tests {
             let given_expr = r"(\a : Type, a) Type";
             let expected_ty = r"Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -249,8 +329,8 @@ mod tests {
             let given_expr = r"Type Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)),
-                Err(TypeError::IllegalApplication),
+                ctx.infer(&parse(given_expr)).unwrap_err(),
+                TypeError::IllegalApplication,
             )
         }
 
@@ -260,10 +340,12 @@ mod tests {
             let given_expr = r"\a : Type, a";
             let expected_ty = r"[a : Type] -> Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -272,10 +354,12 @@ mod tests {
             let given_expr = r"[a : Type] -> a";
             let expected_ty = r"Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -284,10 +368,12 @@ mod tests {
             let given_expr = r"\a : Type, \x : a, x";
             let expected_ty = r"[a : Type] -> a -> a";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -296,10 +382,12 @@ mod tests {
             let given_expr = r"(\a, \x : a, x) : [A : Type] -> A -> A";
             let expected_ty = r"[a : Type] -> a -> a";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -308,10 +396,12 @@ mod tests {
             let given_expr = r"(\a : Type, \x : a, x) Type (Type -> Type)";
             let expected_ty = r"Type -> Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -320,10 +410,12 @@ mod tests {
             let given_expr = r"(\a : Type, \x : a, x) (Type -> Type) (\x : Type, Type)";
             let expected_ty = r"\x : Type, Type";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -338,10 +430,12 @@ mod tests {
                     (a -> b) -> a -> b
             ";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -356,10 +450,12 @@ mod tests {
                     (a -> b) -> a -> b -> a
             ";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
 
         #[test]
@@ -375,10 +471,12 @@ mod tests {
                     (b -> c) -> (a -> b) -> (a -> c)
             ";
 
-            assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
-            );
+            let (inferred, derivation) = ctx.infer(&parse(given_expr)).unwrap();
+            let (expected, _) = parse(expected_ty).eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(inferred, expected);
         }
     }
 }

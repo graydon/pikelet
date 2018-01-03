@@ -48,7 +48,7 @@ fn main() {
                     }
                 };
 
-                let ty = match Context::default().infer(&core) {
+                let (ty, derivation) = match Context::default().infer(&core) {
                     Ok(ty) => ty,
                     Err(err) => {
                         println!("type error: {:?}", err);
@@ -56,8 +56,10 @@ fn main() {
                     }
                 };
 
+                println!("\n{}", derivation);
+
                 // TODO: pretty printing!
-                println!("{:?} : {:?}", core.eval().unwrap(), ty);
+                println!("{} : {}\n", core.eval().unwrap().0, ty);
             }
             Err(err) => {
                 match err {

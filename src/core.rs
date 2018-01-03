@@ -1,5 +1,7 @@
 use std::rc::Rc;
+use std::fmt;
 
+use Derivation;
 use var::{Debruijn, Name, Named, Var};
 
 /// Checkable terms
@@ -27,6 +29,18 @@ impl From<ITerm> for CTerm {
 impl From<Var> for CTerm {
     fn from(src: Var) -> CTerm {
         CTerm::from(ITerm::from(src))
+    }
+}
+
+impl fmt::Display for CTerm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            CTerm::Inf(ref iterm) => fmt::Display::fmt(iterm, f),
+            CTerm::Lam(Named(ref name, ()), ref body) => {
+                write!(f, "\\{} => ", name)?;
+                fmt::Display::fmt(body, f)
+            }
+        }
     }
 }
 
@@ -75,6 +89,37 @@ impl From<Var> for ITerm {
     }
 }
 
+impl fmt::Display for ITerm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            ITerm::Ann(ref expr, ref ty) => {
+                fmt::Display::fmt(expr, f)?;
+                write!(f, " : ")?;
+                fmt::Display::fmt(ty, f)
+            }
+            ITerm::Type => write!(f, "Type"),
+            ITerm::Var(ref var) => fmt::Display::fmt(var, f),
+            ITerm::Lam(Named(ref name, ref ann), ref body) => {
+                write!(f, "\\{} : ", name)?;
+                fmt::Display::fmt(ann, f)?;
+                write!(f, " => ")?;
+                fmt::Display::fmt(body, f)
+            }
+            ITerm::Pi(Named(ref name, ref ann), ref body) => {
+                write!(f, "[{} : ", name)?;
+                fmt::Display::fmt(ann, f)?;
+                write!(f, "] -> ")?;
+                fmt::Display::fmt(body, f)
+            }
+            ITerm::App(ref fn_term, ref arg_term) => {
+                fmt::Display::fmt(fn_term, f)?;
+                write!(f, " ")?;
+                fmt::Display::fmt(arg_term, f)
+            }
+        }
+    }
+}
+
 /// Fully evaluated or stuck values
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Value {
@@ -106,6 +151,30 @@ impl From<Var> for Value {
     }
 }
 
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            Value::Type => write!(f, "Type"),
+            Value::Lam(Named(ref name, ref ann), ref body) => {
+                write!(f, "\\{}", name)?;
+                if let Some(ann) = ann.as_ref() {
+                    write!(f, " : ")?;
+                    fmt::Display::fmt(ann, f)?;
+                }
+                write!(f, " => ")?;
+                fmt::Display::fmt(body, f)
+            }
+            Value::Pi(Named(ref name, ref ann), ref body) => {
+                write!(f, "[{} : ", name)?;
+                fmt::Display::fmt(ann, f)?;
+                write!(f, "] -> ")?;
+                fmt::Display::fmt(body, f)
+            }
+            Value::Stuck(ref svalue) => fmt::Display::fmt(svalue, f),
+        }
+    }
+}
+
 /// 'Stuck' values that cannot be reduced further
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum SValue {
@@ -118,6 +187,19 @@ pub enum SValue {
 impl From<Var> for SValue {
     fn from(src: Var) -> SValue {
         SValue::Var(src)
+    }
+}
+
+impl fmt::Display for SValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            SValue::Var(ref var) => fmt::Display::fmt(var, f),
+            SValue::App(ref fn_term, ref arg_term) => {
+                fmt::Display::fmt(fn_term, f)?;
+                write!(f, " ")?;
+                fmt::Display::fmt(arg_term, f)
+            }
+        }
     }
 }
 
@@ -245,51 +327,82 @@ pub enum EvalError {
 }
 
 impl CTerm {
-    pub fn eval(&self) -> Result<Rc<Value>, EvalError> {
-        match *self {
-            CTerm::Inf(ref inf) => inf.eval(),
+    pub fn eval(&self) -> Result<(Rc<Value>, Derivation), EvalError> {
+        let (rule, premises, result) = match *self {
+            CTerm::Inf(ref inf) => {
+                let (result, premise) = inf.eval()?;
+                ("INF", vec![premise], result)
+            }
             CTerm::Lam(Named(ref name, ()), ref body_expr) => {
                 // Evalute the body before building the lambda
                 let name = name.clone();
-                let body_expr = body_expr.eval()?;
+                let (body_expr, body_premise) = body_expr.eval()?;
+                let result = Rc::new(Value::Lam(Named(name, None), body_expr));
 
-                Ok(Rc::new(Value::Lam(Named(name, None), body_expr)))
+                ("INF", vec![body_premise], result)
             }
-        }
+        };
+
+        let derivation = Derivation {
+            judgement: "EVAL-CTERM",
+            rule,
+            conclusion: format!("{:#}  ⇓  {:#}", self, result),
+            premises,
+        };
+
+        Ok((result, derivation))
     }
 }
 
 impl ITerm {
-    pub fn eval(&self) -> Result<Rc<Value>, EvalError> {
-        match *self {
-            ITerm::Ann(ref expr, _) => expr.eval(),
+    pub fn eval(&self) -> Result<(Rc<Value>, Derivation), EvalError> {
+        let (rule, premises, result) = match *self {
+            ITerm::Ann(ref expr, _) => {
+                let (result, premise) = expr.eval()?;
+                ("ANN", vec![premise], result)
+            }
 
-            ITerm::Type => Ok(Rc::new(Value::Type)),
-            ITerm::Var(ref var) => Ok(Rc::new(Value::from(var.clone()))),
+            ITerm::Type => ("TYPE", vec![], Rc::new(Value::Type)),
+            ITerm::Var(ref var) => ("VAR", vec![], Rc::new(Value::from(var.clone()))),
 
             ITerm::Lam(Named(ref name, ref param_ty), ref body_expr) => {
                 let name = name.clone();
-                let param_ty = param_ty.eval()?;
-                let body_expr = body_expr.eval()?;
+                let (param_ty, param_ty_premise) = param_ty.eval()?;
+                let (body_expr, body_expr_premise) = body_expr.eval()?;
 
-                Ok(Rc::new(Value::Lam(Named(name, Some(param_ty)), body_expr)))
+                let result = Rc::new(Value::Lam(Named(name, Some(param_ty)), body_expr));
+
+                ("LAM", vec![param_ty_premise, body_expr_premise], result)
             }
 
             ITerm::Pi(Named(ref name, ref param_ty), ref body_expr) => {
                 let name = name.clone();
-                let param_ty = param_ty.eval()?;
-                let body_expr = body_expr.eval()?;
+                let (param_ty, param_ty_premise) = param_ty.eval()?;
+                let (body_expr, body_expr_premise) = body_expr.eval()?;
 
-                Ok(Rc::new(Value::Pi(Named(name, param_ty), body_expr)))
+                let result = Rc::new(Value::Pi(Named(name, param_ty), body_expr));
+
+                ("PI", vec![param_ty_premise, body_expr_premise], result)
             }
 
             ITerm::App(ref fn_expr, ref arg) => {
-                let fn_expr = fn_expr.eval()?;
-                let arg = arg.eval()?;
+                let (fn_expr, fn_expr_premise) = fn_expr.eval()?;
+                let (arg, arg_premise) = arg.eval()?;
 
-                Value::app(fn_expr, arg)
+                let result = Value::app(fn_expr, arg)?;
+
+                ("APP", vec![fn_expr_premise, arg_premise], result)
             }
-        }
+        };
+
+        let derivation = Derivation {
+            judgement: "EVAL-ITERM",
+            rule,
+            conclusion: format!("{:#}  ⇓  {:#}", self, result),
+            premises,
+        };
+
+        Ok((result, derivation))
     }
 }
 
@@ -372,17 +485,22 @@ mod tests {
         fn var() {
             let x = Name(String::from("x"));
 
-            assert_eq!(
-                parse(r"x").eval().unwrap(),
-                Rc::new(Value::from(Var::Free(x))),
-            );
+            let (evaluated, derivation) = parse(r"x").eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(evaluated, Rc::new(Value::from(Var::Free(x))),);
         }
 
         #[test]
         fn ty() {
             let ty = Rc::new(Value::Type);
 
-            assert_eq!(parse(r"Type").eval().unwrap(), ty);
+            let (evaluated, derivation) = parse(r"Type").eval().unwrap();
+
+            println!("\n{}", derivation);
+
+            assert_eq!(evaluated, ty);
         }
 
         #[test]
@@ -390,8 +508,12 @@ mod tests {
             let x = Name(String::from("x"));
             let ty = Rc::new(Value::Type);
 
+            let (evaluated, derivation) = parse(r"\x : Type, x").eval().unwrap();
+
+            println!("\n{}", derivation);
+
             assert_eq!(
-                parse(r"\x : Type, x").eval().unwrap(),
+                evaluated,
                 Rc::new(Value::Lam(
                     Named(x.clone(), Some(ty)),
                     Rc::new(Value::from(Var::Bound(Named(x, Debruijn(0))))),
@@ -404,8 +526,12 @@ mod tests {
             let x = Name(String::from("x"));
             let ty = Rc::new(Value::Type);
 
+            let (evaluated, derivation) = parse(r"[x : Type] -> x").eval().unwrap();
+
+            println!("\n{}", derivation);
+
             assert_eq!(
-                parse(r"[x : Type] -> x").eval().unwrap(),
+                evaluated,
                 Rc::new(Value::Pi(
                     Named(x.clone(), ty),
                     Rc::new(Value::from(Var::Bound(Named(x, Debruijn(0))))),
@@ -421,10 +547,14 @@ mod tests {
             let ty = Rc::new(Value::Type);
             let ty_arr = Rc::new(Value::Pi(Named(u, ty.clone()), ty.clone()));
 
+            let (evaluated, derivation) = parse(r"\x : (Type -> Type), \y : Type, x y")
+                .eval()
+                .unwrap();
+
+            println!("\n{}", derivation);
+
             assert_eq!(
-                parse(r"\x : (Type -> Type), \y : Type, x y")
-                    .eval()
-                    .unwrap(),
+                evaluated,
                 Rc::new(Value::Lam(
                     Named(x.clone(), Some(ty_arr)),
                     Rc::new(Value::Lam(
@@ -446,10 +576,14 @@ mod tests {
             let ty = Rc::new(Value::Type);
             let ty_arr = Rc::new(Value::Pi(Named(u, ty.clone()), ty.clone()));
 
+            let (evaluated, derivation) = parse(r"[x : (Type -> Type)] -> \y : Type, x y")
+                .eval()
+                .unwrap();
+
+            println!("\n{}", derivation);
+
             assert_eq!(
-                parse(r"[x : (Type -> Type)] -> \y : Type, x y")
-                    .eval()
-                    .unwrap(),
+                evaluated,
                 Rc::new(Value::Pi(
                     Named(x.clone(), ty_arr),
                     Rc::new(Value::Lam(
