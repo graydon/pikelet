@@ -38,6 +38,30 @@
 
 use std::fmt;
 
+pub trait LocallyNameless: Sized {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>);
+
+    fn close0(&mut self, name: &Name) {
+        self.close(&|found| if name == found {
+            Some(Debruijn::ZERO)
+        } else {
+            None
+        });
+    }
+}
+
+impl LocallyNameless for () {
+    fn close(&mut self, _: &Fn(&Name) -> Option<Debruijn>) {}
+}
+
+impl<T: LocallyNameless> LocallyNameless for Option<T> {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
+        if let Some(ref mut x) = *self {
+            x.close(on_free);
+        }
+    }
+}
+
 /// The name of a free variable
 #[derive(Debug, Clone)]
 pub enum Name {
@@ -101,6 +125,12 @@ impl<T: PartialEq> PartialEq for Named<T> {
     }
 }
 
+impl<T: LocallyNameless> LocallyNameless for Named<T> {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
+        self.1.close(on_free);
+    }
+}
+
 /// The [debruijn index] of the binder that introduced the variable
 ///
 /// For example:
@@ -146,14 +176,19 @@ pub enum Var {
     Bound(Named<Debruijn>),
 }
 
-impl Var {
-    pub fn close(&mut self, level: Debruijn, name: &Name) {
+impl LocallyNameless for Var {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
         *self = match *self {
-            Var::Free(ref n) if n == name => Var::Bound(Named(n.clone(), level)),
-            Var::Bound(_) | Var::Free(_) => return,
+            Var::Bound(_) => return,
+            Var::Free(ref name) => match on_free(name) {
+                None => return,
+                Some(level) => Var::Bound(Named(name.clone(), level)),
+            },
         };
     }
+}
 
+impl Var {
     pub fn open(&self, level: Debruijn) -> bool {
         match *self {
             Var::Bound(Named(_, b)) if b == level => true,

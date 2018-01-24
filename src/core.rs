@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use parse::Term as ParseTerm;
 use pretty::{self, ToDoc};
-use var::{Debruijn, Name, Named, Var};
+use var::{Debruijn, LocallyNameless, Name, Named, Var};
 
 /// Checkable terms
 ///
@@ -196,43 +196,67 @@ pub type RcType = RcValue;
 
 // Abstraction and instantiation
 
-impl RcCTerm {
-    pub fn close0(&mut self, name: &Name) {
-        self.close(Debruijn::ZERO, name);
-    }
-
-    pub fn close(&mut self, level: Debruijn, name: &Name) {
+impl LocallyNameless for RcCTerm {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
         match *Rc::make_mut(&mut self.inner) {
-            CTerm::Inf(ref mut i) => i.close(level, name),
-            CTerm::Lam(_, ref mut body) => body.close(level.succ(), name),
+            CTerm::Inf(ref mut i) => i.close(on_free),
+            CTerm::Lam(ref mut param, ref mut body) => {
+                param.close(on_free);
+                body.close(&|name| on_free(name).map(Debruijn::succ));
+            }
         }
     }
 }
 
-impl RcITerm {
-    pub fn close0(&mut self, name: &Name) {
-        self.close(Debruijn::ZERO, name);
-    }
-
-    pub fn close(&mut self, level: Debruijn, name: &Name) {
+impl LocallyNameless for RcITerm {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
         match *Rc::make_mut(&mut self.inner) {
             ITerm::Ann(ref mut expr, ref mut ty) => {
-                expr.close(level, name);
-                ty.close(level, name);
+                expr.close(on_free);
+                ty.close(on_free);
             }
-            ITerm::Lam(Named(_, ref mut ty), ref mut body) => {
-                ty.close(level, name);
-                body.close(level.succ(), name);
+            ITerm::Lam(ref mut param, ref mut body) => {
+                param.close(on_free);
+                body.close(&|name| on_free(name).map(Debruijn::succ));
             }
-            ITerm::Pi(Named(_, ref mut ty), ref mut body) => {
-                ty.close(level, name);
-                body.close(level.succ(), name);
+            ITerm::Pi(ref mut param, ref mut body) => {
+                param.close(on_free);
+                body.close(&|name| on_free(name).map(Debruijn::succ));
             }
-            ITerm::Var(ref mut var) => var.close(level, name),
+            ITerm::Var(ref mut var) => var.close(on_free),
             ITerm::Type => {}
             ITerm::App(ref mut f, ref mut x) => {
-                f.close(level, name);
-                x.close(level, name);
+                f.close(on_free);
+                x.close(on_free);
+            }
+        }
+    }
+}
+
+impl LocallyNameless for RcValue {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
+        match *Rc::make_mut(&mut self.inner) {
+            Value::Type => {}
+            Value::Lam(ref mut param, ref mut body) => {
+                param.close(on_free);
+                body.close(on_free);
+            }
+            Value::Pi(ref mut param, ref mut body) => {
+                param.close(on_free);
+                body.close(on_free);
+            }
+            Value::Neutral(ref mut stuck) => stuck.close(on_free),
+        }
+    }
+}
+
+impl LocallyNameless for RcNeutral {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
+        match *Rc::make_mut(&mut self.inner) {
+            Neutral::Var(ref mut var) => var.close(on_free),
+            Neutral::App(ref mut fn_expr, ref mut arg_expr) => {
+                fn_expr.close(on_free);
+                arg_expr.close(on_free);
             }
         }
     }
