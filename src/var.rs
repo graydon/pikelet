@@ -38,9 +38,12 @@
 
 use std::fmt;
 
+/// Locally nameless terms
 pub trait LocallyNameless: Sized {
+    /// Capture some free variables in the term
     fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>);
 
+    /// Capture a single free variable
     fn close0(&mut self, name: &Name) {
         self.close(&|found| if name == found {
             Some(Debruijn::ZERO)
@@ -50,6 +53,7 @@ pub trait LocallyNameless: Sized {
     }
 }
 
+/// Locally nameless patterns
 pub trait Pattern: LocallyNameless {
     fn handle_free(&self, level: Debruijn, name: &Name) -> Option<Debruijn>;
 }
