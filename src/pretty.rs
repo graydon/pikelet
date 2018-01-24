@@ -1,7 +1,7 @@
 extern crate pretty;
 
 use core::{CTerm, ITerm, Neutral, RcCTerm, RcITerm, RcNeutral, RcValue, Value};
-use var::{Name, Named};
+use var::Name;
 
 use self::pretty::{BoxDoc, Doc};
 
@@ -183,9 +183,12 @@ impl ToDoc for CTerm {
     fn to_doc(&self, context: Context) -> Doc<BoxDoc> {
         match *self {
             CTerm::Inf(ref iterm) => iterm.to_doc(context),
-            CTerm::Lam(Named(ref name, ()), ref body) => {
-                pretty_lam(context, name, None::<&ITerm>, body)
-            }
+            CTerm::Lam(ref scope) => pretty_lam(
+                context,
+                &scope.unsafe_param.0,
+                None::<&ITerm>,
+                &scope.unsafe_body,
+            ),
         }
     }
 }
@@ -202,8 +205,18 @@ impl ToDoc for ITerm {
             ITerm::Ann(ref expr, ref ty) => pretty_ann(context, expr, ty),
             ITerm::Type => pretty_ty(),
             ITerm::Var(ref var) => Doc::as_string(var),
-            ITerm::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, Some(a), b),
-            ITerm::Pi(Named(ref n, ref a), ref b) => pretty_pi(context, n, a, b),
+            ITerm::Lam(ref scope) => pretty_lam(
+                context,
+                &scope.unsafe_param.0,
+                Some(&scope.unsafe_param.1),
+                &scope.unsafe_body,
+            ),
+            ITerm::Pi(ref scope) => pretty_pi(
+                context,
+                &scope.unsafe_param.0,
+                &scope.unsafe_param.1,
+                &scope.unsafe_body,
+            ),
             ITerm::App(ref f, ref a) => pretty_app(context, f, a),
         }
     }
@@ -219,8 +232,18 @@ impl ToDoc for Value {
     fn to_doc(&self, context: Context) -> Doc<BoxDoc> {
         match *self {
             Value::Type => pretty_ty(),
-            Value::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, a.as_ref(), b),
-            Value::Pi(Named(ref n, ref a), ref b) => pretty_pi(context, n, a, b),
+            Value::Lam(ref scope) => pretty_lam(
+                context,
+                &scope.unsafe_param.0,
+                scope.unsafe_param.1.as_ref(),
+                &scope.unsafe_body,
+            ),
+            Value::Pi(ref scope) => pretty_pi(
+                context,
+                &scope.unsafe_param.0,
+                &scope.unsafe_param.1,
+                &scope.unsafe_body,
+            ),
             Value::Neutral(ref svalue) => svalue.to_doc(context),
         }
     }

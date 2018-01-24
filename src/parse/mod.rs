@@ -46,7 +46,7 @@ impl FromStr for Term {
 #[cfg(test)]
 mod tests {
     use core::{CTerm, ITerm, RcITerm};
-    use var::{Debruijn, Name, Named, Var};
+    use var::{Name, Named, Scope, Var};
 
     fn parse(src: &str) -> RcITerm {
         RcITerm::from_parse(&src.parse().unwrap()).unwrap()
@@ -124,16 +124,16 @@ mod tests {
 
         assert_eq!(
             parse(r"\x : Type -> Type => x"),
-            ITerm::Lam(
+            ITerm::Lam(Scope::bind(
                 Named(
                     x.clone(),
-                    CTerm::from(ITerm::Pi(
+                    CTerm::from(ITerm::Pi(Scope::bind(
                         Named(Name::Abstract, CTerm::from(ITerm::Type).into()),
                         CTerm::from(ITerm::Type).into(),
-                    )).into(),
+                    ))).into(),
                 ),
-                ITerm::from(Var::Bound(Named(x, Debruijn(0)))).into(),
-            ).into(),
+                ITerm::from(Var::Free(x)).into(),
+            )).into(),
         );
     }
 
@@ -144,16 +144,16 @@ mod tests {
 
         assert_eq!(
             parse(r"\x : (\y => y) => x"),
-            ITerm::Lam(
+            ITerm::Lam(Scope::bind(
                 Named(
                     x.clone(),
-                    CTerm::Lam(
+                    CTerm::Lam(Scope::bind(
                         Named(y.clone(), ()),
-                        CTerm::from(Var::Bound(Named(y, Debruijn(0)))).into(),
-                    ).into(),
+                        CTerm::from(Var::Free(y)).into(),
+                    )).into(),
                 ),
-                ITerm::from(Var::Bound(Named(x, Debruijn(0)))).into(),
-            ).into(),
+                ITerm::from(Var::Free(x)).into(),
+            )).into(),
         );
     }
 
@@ -164,13 +164,13 @@ mod tests {
 
         assert_eq!(
             parse(r"\x : Type => \y : Type => x"),
-            ITerm::Lam(
+            ITerm::Lam(Scope::bind(
                 Named(x.clone(), CTerm::from(ITerm::Type).into()),
-                ITerm::Lam(
+                ITerm::Lam(Scope::bind(
                     Named(y, CTerm::from(ITerm::Type).into()),
-                    ITerm::from(Var::Bound(Named(x, Debruijn(1)))).into(),
-                ).into(),
-            ).into(),
+                    ITerm::from(Var::Free(x)).into(),
+                )).into(),
+            )).into(),
         );
     }
 
@@ -178,10 +178,10 @@ mod tests {
     fn arrow() {
         assert_eq!(
             parse(r"Type -> Type"),
-            ITerm::Pi(
+            ITerm::Pi(Scope::bind(
                 Named(Name::Abstract, CTerm::from(ITerm::Type).into()),
                 CTerm::from(ITerm::Type).into(),
-            ).into(),
+            )).into(),
         );
     }
 
@@ -191,16 +191,16 @@ mod tests {
 
         assert_eq!(
             parse(r"(x : Type -> Type) -> x"),
-            ITerm::Pi(
+            ITerm::Pi(Scope::bind(
                 Named(
                     x.clone(),
-                    CTerm::from(ITerm::Pi(
+                    CTerm::from(ITerm::Pi(Scope::bind(
                         Named(Name::Abstract, CTerm::from(ITerm::Type).into()),
                         CTerm::from(ITerm::Type).into(),
-                    )).into(),
+                    ))).into(),
                 ),
-                CTerm::from(Var::Bound(Named(x, Debruijn(0)))).into(),
-            ).into(),
+                CTerm::from(Var::Free(x)).into(),
+            )).into(),
         );
     }
 
@@ -211,13 +211,13 @@ mod tests {
 
         assert_eq!(
             parse(r"(x : Type) -> (y : Type) -> x"),
-            ITerm::Pi(
+            ITerm::Pi(Scope::bind(
                 Named(x.clone(), CTerm::from(ITerm::Type).into()),
-                CTerm::from(ITerm::Pi(
+                CTerm::from(ITerm::Pi(Scope::bind(
                     Named(y, CTerm::from(ITerm::Type).into()),
-                    CTerm::from(Var::Bound(Named(x, Debruijn(1)))).into(),
-                )).into(),
-            ).into(),
+                    CTerm::from(Var::Free(x)).into(),
+                ))).into(),
+            )).into(),
         );
     }
 
@@ -227,16 +227,13 @@ mod tests {
 
         assert_eq!(
             parse(r"(x : Type) -> x -> x"),
-            ITerm::Pi(
+            ITerm::Pi(Scope::bind(
                 Named(x.clone(), CTerm::from(ITerm::Type).into()),
-                CTerm::from(ITerm::Pi(
-                    Named(
-                        Name::Abstract,
-                        CTerm::from(Var::Bound(Named(x.clone(), Debruijn(0)))).into(),
-                    ),
-                    CTerm::from(Var::Bound(Named(x, Debruijn(1)))).into(),
-                )).into(),
-            ).into(),
+                CTerm::from(ITerm::Pi(Scope::bind(
+                    Named(Name::Abstract, CTerm::from(Var::Free(x.clone())).into(),),
+                    CTerm::from(Var::Free(x)).into(),
+                ))).into(),
+            )).into(),
         );
     }
 
@@ -247,23 +244,22 @@ mod tests {
 
         assert_eq!(
             parse(r"\x : (Type -> Type) => \y : Type => x y"),
-            ITerm::Lam(
+            ITerm::Lam(Scope::bind(
                 Named(
                     x.clone(),
-                    CTerm::from(ITerm::Pi(
+                    CTerm::from(ITerm::Pi(Scope::bind(
                         Named(Name::Abstract, CTerm::from(ITerm::Type).into()),
                         CTerm::from(ITerm::Type).into(),
-                    ),)
-                        .into(),
+                    ))).into(),
                 ),
-                ITerm::Lam(
+                ITerm::Lam(Scope::bind(
                     Named(y.clone(), CTerm::from(ITerm::Type).into()),
                     ITerm::App(
-                        ITerm::from(Var::Bound(Named(x, Debruijn(1)))).into(),
-                        CTerm::from(Var::Bound(Named(y, Debruijn(0)))).into(),
+                        ITerm::from(Var::Free(x)).into(),
+                        CTerm::from(Var::Free(y)).into(),
                     ).into(),
-                ).into(),
-            ).into(),
+                )).into(),
+            )).into(),
         );
     }
 
@@ -274,16 +270,13 @@ mod tests {
 
         assert_eq!(
             parse(r"\a : Type => \x : a => x"),
-            ITerm::Lam(
+            ITerm::Lam(Scope::bind(
                 Named(a.clone(), CTerm::from(ITerm::Type).into()),
-                ITerm::Lam(
-                    Named(
-                        x.clone(),
-                        CTerm::from(Var::Bound(Named(a, Debruijn(0)))).into(),
-                    ),
-                    ITerm::from(Var::Bound(Named(x, Debruijn(0)))).into(),
-                ).into(),
-            ).into(),
+                ITerm::Lam(Scope::bind(
+                    Named(x.clone(), CTerm::from(Var::Free(a)).into(),),
+                    ITerm::from(Var::Free(x)).into(),
+                )).into(),
+            )).into(),
         );
     }
 
@@ -293,16 +286,13 @@ mod tests {
 
         assert_eq!(
             parse(r"(a : Type) -> a -> a"),
-            ITerm::Pi(
+            ITerm::Pi(Scope::bind(
                 Named(a.clone(), CTerm::from(ITerm::Type).into()),
-                CTerm::from(ITerm::Pi(
-                    Named(
-                        Name::Abstract,
-                        CTerm::from(Var::Bound(Named(a.clone(), Debruijn(0)))).into(),
-                    ),
-                    CTerm::from(Var::Bound(Named(a, Debruijn(1)))).into(),
-                )).into(),
-            ).into(),
+                CTerm::from(ITerm::Pi(Scope::bind(
+                    Named(Name::Abstract, CTerm::from(Var::Free(a.clone())).into(),),
+                    CTerm::from(Var::Free(a)).into(),
+                ))).into(),
+            )).into(),
         );
     }
 

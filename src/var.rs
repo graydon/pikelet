@@ -50,6 +50,10 @@ pub trait LocallyNameless: Sized {
     }
 }
 
+pub trait Pattern: LocallyNameless {
+    fn handle_free(&self, level: Debruijn, name: &Name) -> Option<Debruijn>;
+}
+
 impl LocallyNameless for () {
     fn close(&mut self, _: &Fn(&Name) -> Option<Debruijn>) {}
 }
@@ -131,6 +135,16 @@ impl<T: LocallyNameless> LocallyNameless for Named<T> {
     }
 }
 
+impl<T: LocallyNameless> Pattern for Named<T> {
+    fn handle_free(&self, level: Debruijn, name: &Name) -> Option<Debruijn> {
+        if &self.0 == name {
+            Some(level)
+        } else {
+            None
+        }
+    }
+}
+
 /// The [debruijn index] of the binder that introduced the variable
 ///
 /// For example:
@@ -203,5 +217,29 @@ impl fmt::Display for Var {
             Var::Bound(Named(ref name, ref b)) if f.alternate() => write!(f, "{}#{}", name, b),
             Var::Bound(Named(ref name, _)) | Var::Free(ref name) => write!(f, "{}", name),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Scope<P, T> {
+    pub unsafe_param: P,
+    pub unsafe_body: T,
+}
+
+impl<P: Pattern, T: LocallyNameless> Scope<P, T> {
+    pub fn bind(param: P, mut body: T) -> Scope<P, T> {
+        body.close(&|found| param.handle_free(Debruijn::ZERO, found));
+        Scope {
+            unsafe_param: param,
+            unsafe_body: body,
+        }
+    }
+}
+
+impl<P: Pattern, T: LocallyNameless> LocallyNameless for Scope<P, T> {
+    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
+        self.unsafe_param.close(on_free);
+        self.unsafe_body
+            .close(&|name| on_free(name).map(Debruijn::succ));
     }
 }

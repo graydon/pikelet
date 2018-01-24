@@ -1,7 +1,7 @@
 //! Contexts and type checking
 
 use core::{CTerm, EvalError, ITerm, RcCTerm, RcITerm, RcType, RcValue, Value};
-use var::{Debruijn, Name, Named, Var};
+use var::{Debruijn, Name, Named, Scope, Var};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
@@ -76,9 +76,10 @@ impl<'a> Context<'a> {
             //  1.  Γ, x:τ₁ ⊢ e :↓ τ₂
             // ─────────────────────────────── (CHECK/LAM)
             //      Γ ⊢ λx→e :↓ (x:τ₁)→τ₂
-            CTerm::Lam(_, ref body_expr) => match *expected_ty.inner {
-                Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
-                    self.extend(param_ty.clone()).check(body_expr, ret_ty) // 1.
+            CTerm::Lam(ref lam_scope) => match *expected_ty.inner {
+                Value::Pi(ref pi_scope) => {
+                    self.extend(pi_scope.unsafe_param.1.clone())
+                        .check(&lam_scope.unsafe_body, &pi_scope.unsafe_body) // 1.
                 }
                 _ => Err(TypeError::ExpectedFunction {
                     lam_expr: expr.clone(),
@@ -112,16 +113,17 @@ impl<'a> Context<'a> {
             //  3.  Γ, x:τ₁ ⊢ e :↑ τ₂
             // ─────────────────────────────── (INFER/LAM)
             //      Γ ⊢ λx:ρ→e :↑ (x:τ₁)→τ₂
-            ITerm::Lam(Named(ref param_name, ref param_ty), ref body_expr) => {
-                self.check(param_ty, &Value::Type.into())?; // 1.
-                let simp_param_ty = param_ty.eval()?; // 2.
-                let body_ty = self.extend(simp_param_ty.clone()).infer(body_expr)?; // 3.
+            ITerm::Lam(ref scope) => {
+                self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
+                let simp_param_ty = scope.unsafe_param.1.eval()?; // 2.
+                let body_ty = self.extend(simp_param_ty.clone())
+                    .infer(&scope.unsafe_body)?; // 3.
 
                 Ok(
-                    Value::Pi(
-                        Named(param_name.clone(), simp_param_ty),
-                        body_ty, // shift??
-                    ).into(),
+                    Value::Pi(Scope {
+                        unsafe_param: Named(scope.unsafe_param.0.clone(), simp_param_ty),
+                        unsafe_body: body_ty, // shift??
+                    }).into(),
                 )
             }
 
@@ -130,11 +132,11 @@ impl<'a> Context<'a> {
             //  3.  Γ, x:τ₁ ⊢ ρ₂ :↓ Type
             // ────────────────────────────── (INFER/PI)
             //      Γ ⊢ (x:ρ₁)→ρ₂ :↑ Type
-            ITerm::Pi(Named(_, ref param_ty), ref body_ty) => {
-                self.check(param_ty, &Value::Type.into())?; // 1.
-                let simp_param_ty = param_ty.eval()?; // 2.
+            ITerm::Pi(ref scope) => {
+                self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
+                let simp_param_ty = scope.unsafe_param.1.eval()?; // 2.
                 self.extend(simp_param_ty)
-                    .check(body_ty, &Value::Type.into())?; // 3.
+                    .check(&scope.unsafe_body, &Value::Type.into())?; // 3.
                 Ok(Value::Type.into())
             }
 
@@ -157,9 +159,9 @@ impl<'a> Context<'a> {
             ITerm::App(ref fn_expr, ref arg_expr) => {
                 let fn_type = self.infer(fn_expr)?; // 1.
                 match *fn_type.inner {
-                    Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
-                        self.check(arg_expr, param_ty)?; // 2.
-                        let body_ty = RcValue::open0(ret_ty, &arg_expr.eval()?)?; // 3.
+                    Value::Pi(ref scope) => {
+                        self.check(arg_expr, &scope.unsafe_param.1)?; // 2.
+                        let body_ty = RcValue::open0(&scope.unsafe_body, &arg_expr.eval()?)?; // 3.
                         Ok(body_ty)
                     }
                     // TODO: More error info
