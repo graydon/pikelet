@@ -159,7 +159,7 @@ impl<'a> Context<'a> {
                 match *fn_type.inner {
                     Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
                         self.check(arg_expr, param_ty)?; // 2.
-                        let body_ty = RcValue::instantiate0(ret_ty, &arg_expr.eval()?)?; // 3.
+                        let body_ty = RcValue::open0(ret_ty, &arg_expr.eval()?)?; // 3.
                         Ok(body_ty)
                     }
                     // TODO: More error info

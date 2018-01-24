@@ -197,42 +197,42 @@ pub type RcType = RcValue;
 // Abstraction and instantiation
 
 impl RcCTerm {
-    pub fn abstract0(&mut self, name: &Name) {
-        self.abstract_at(Debruijn::ZERO, name);
+    pub fn close0(&mut self, name: &Name) {
+        self.close(Debruijn::ZERO, name);
     }
 
-    pub fn abstract_at(&mut self, level: Debruijn, name: &Name) {
+    pub fn close(&mut self, level: Debruijn, name: &Name) {
         match *Rc::make_mut(&mut self.inner) {
-            CTerm::Inf(ref mut i) => i.abstract_at(level, name),
-            CTerm::Lam(_, ref mut body) => body.abstract_at(level.succ(), name),
+            CTerm::Inf(ref mut i) => i.close(level, name),
+            CTerm::Lam(_, ref mut body) => body.close(level.succ(), name),
         }
     }
 }
 
 impl RcITerm {
-    pub fn abstract0(&mut self, name: &Name) {
-        self.abstract_at(Debruijn::ZERO, name);
+    pub fn close0(&mut self, name: &Name) {
+        self.close(Debruijn::ZERO, name);
     }
 
-    pub fn abstract_at(&mut self, level: Debruijn, name: &Name) {
+    pub fn close(&mut self, level: Debruijn, name: &Name) {
         match *Rc::make_mut(&mut self.inner) {
             ITerm::Ann(ref mut expr, ref mut ty) => {
-                expr.abstract_at(level, name);
-                ty.abstract_at(level, name);
+                expr.close(level, name);
+                ty.close(level, name);
             }
             ITerm::Lam(Named(_, ref mut ty), ref mut body) => {
-                ty.abstract_at(level, name);
-                body.abstract_at(level.succ(), name);
+                ty.close(level, name);
+                body.close(level.succ(), name);
             }
             ITerm::Pi(Named(_, ref mut ty), ref mut body) => {
-                ty.abstract_at(level, name);
-                body.abstract_at(level.succ(), name);
+                ty.close(level, name);
+                body.close(level.succ(), name);
             }
-            ITerm::Var(ref mut var) => var.abstract_at(level, name),
+            ITerm::Var(ref mut var) => var.close(level, name),
             ITerm::Type => {}
             ITerm::App(ref mut f, ref mut x) => {
-                f.abstract_at(level, name);
-                x.abstract_at(level, name);
+                f.close(level, name);
+                x.close(level, name);
             }
         }
     }
@@ -241,7 +241,7 @@ impl RcITerm {
 impl RcValue {
     pub fn eval_app(fn_expr: RcValue, arg: RcValue) -> Result<RcValue, EvalError> {
         match *fn_expr.inner {
-            Value::Lam(_, ref body) => RcValue::instantiate0(body, &arg),
+            Value::Lam(_, ref body) => RcValue::open0(body, &arg),
             Value::Neutral(ref stuck) => Ok(Value::from(Neutral::App(stuck.clone(), arg)).into()),
             _ => Err(EvalError::ArgAppliedToNonFunction {
                 expr: fn_expr.clone(),
@@ -250,11 +250,11 @@ impl RcValue {
         }
     }
 
-    pub fn instantiate0(val: &RcValue, x: &RcValue) -> Result<RcValue, EvalError> {
-        RcValue::instantiate_at(val, Debruijn::ZERO, &x)
+    pub fn open0(val: &RcValue, x: &RcValue) -> Result<RcValue, EvalError> {
+        RcValue::open(val, Debruijn::ZERO, &x)
     }
 
-    pub fn instantiate_at(
+    pub fn open(
         val: &RcValue,
         level: Debruijn,
         x: &RcValue,
@@ -264,41 +264,41 @@ impl RcValue {
             Value::Lam(Named(ref name, ref param_ty), ref body) => {
                 let param_ty = match param_ty.as_ref() {
                     None => None,
-                    Some(ref param_ty) => Some(RcValue::instantiate_at(param_ty, level, x)?),
+                    Some(ref param_ty) => Some(RcValue::open(param_ty, level, x)?),
                 };
-                let body = RcValue::instantiate_at(body, level.succ(), x)?;
+                let body = RcValue::open(body, level.succ(), x)?;
 
                 Ok(Value::Lam(Named(name.clone(), param_ty), body).into())
             }
             Value::Pi(Named(ref name, ref param_ty), ref body) => {
-                let param_ty = RcValue::instantiate_at(param_ty, level, x)?;
-                let body = RcValue::instantiate_at(body, level.succ(), x)?;
+                let param_ty = RcValue::open(param_ty, level, x)?;
+                let body = RcValue::open(body, level.succ(), x)?;
 
                 Ok(Value::Pi(Named(name.clone(), param_ty), body).into())
             }
-            Value::Neutral(ref stuck) => RcNeutral::instantiate_at(stuck, level, x),
+            Value::Neutral(ref stuck) => RcNeutral::open(stuck, level, x),
         }
     }
 }
 
 impl RcNeutral {
-    pub fn instantiate0(val: &RcNeutral, x: &RcValue) -> Result<RcValue, EvalError> {
-        RcNeutral::instantiate_at(val, Debruijn::ZERO, &x)
+    pub fn open0(val: &RcNeutral, x: &RcValue) -> Result<RcValue, EvalError> {
+        RcNeutral::open(val, Debruijn::ZERO, &x)
     }
 
-    pub fn instantiate_at(
+    pub fn open(
         val: &RcNeutral,
         level: Debruijn,
         x: &RcValue,
     ) -> Result<RcValue, EvalError> {
         match *val.inner {
-            Neutral::Var(ref var) => match var.instantiate_at(level) {
+            Neutral::Var(ref var) => match var.open(level) {
                 true => Ok(x.clone()),
                 false => Ok(Value::from(val.clone()).into()),
             },
             Neutral::App(ref fn_expr, ref arg_expr) => {
-                let fn_expr = RcNeutral::instantiate_at(fn_expr, level, x)?;
-                let arg = RcValue::instantiate_at(arg_expr, level, x)?;
+                let fn_expr = RcNeutral::open(fn_expr, level, x)?;
+                let arg = RcValue::open(arg_expr, level, x)?;
 
                 RcValue::eval_app(fn_expr, arg)
             }
@@ -319,7 +319,7 @@ impl RcCTerm {
             ParseTerm::Lam(ref name, None, ref body) => {
                 let name = Name::User(name.clone());
                 let mut body = RcCTerm::from_parse(body)?;
-                body.abstract0(&name);
+                body.close0(&name);
 
                 Ok(CTerm::Lam(Named(name, ()), body.into()).into())
             }
@@ -340,7 +340,7 @@ impl RcITerm {
             ParseTerm::Lam(ref name, Some(ref ann), ref body) => {
                 let name = Name::User(name.clone());
                 let mut body = RcITerm::from_parse(body)?;
-                body.abstract0(&name);
+                body.close0(&name);
 
                 Ok(ITerm::Lam(Named(name, RcCTerm::from_parse(ann)?.into()), body).into())
             }
@@ -349,14 +349,14 @@ impl RcITerm {
             ParseTerm::Pi(ref name, ref ann, ref body) => {
                 let name = Name::User(name.clone());
                 let mut body = RcCTerm::from_parse(body)?;
-                body.abstract0(&name);
+                body.close0(&name);
 
                 Ok(ITerm::Pi(Named(name, RcCTerm::from_parse(ann)?.into()), body).into())
             }
             ParseTerm::Arrow(ref ann, ref body) => {
                 let name = Name::Abstract;
                 let mut body = RcCTerm::from_parse(body)?;
-                body.abstract0(&name);
+                body.close0(&name);
 
                 Ok(ITerm::Pi(Named(name, RcCTerm::from_parse(ann)?.into()), body).into())
             }

@@ -13,8 +13,8 @@
 //! ## Libraries
 //!
 //! There are a number of libraries out there for other languages that abstract
-//! away handling locally nameless representations, but I've not yet figured out
-//! how to port them to Rust yet:
+//! away the error-prone tedium handling locally nameless representations, but
+//! I've not yet figured out how to port them to Rust yet:
 //!
 //! - DBLib: Facilities for working with de Bruijn indices in Coq
 //!     - [Blog Post](http://gallium.inria.fr/blog/announcing-dblib/)
@@ -147,14 +147,14 @@ pub enum Var {
 }
 
 impl Var {
-    pub fn abstract_at(&mut self, level: Debruijn, name: &Name) {
+    pub fn close(&mut self, level: Debruijn, name: &Name) {
         *self = match *self {
             Var::Free(ref n) if n == name => Var::Bound(Named(n.clone(), level)),
             Var::Bound(_) | Var::Free(_) => return,
         };
     }
 
-    pub fn instantiate_at(&self, level: Debruijn) -> bool {
+    pub fn open(&self, level: Debruijn) -> bool {
         match *self {
             Var::Bound(Named(_, b)) if b == level => true,
             Var::Bound(_) | Var::Free(_) => false,
