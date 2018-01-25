@@ -198,19 +198,19 @@ impl LocallyNameless for RcValue {
 }
 
 impl RcValue {
-    pub fn open0(val: &RcValue, x: &RcValue) -> RcValue {
-        RcValue::open(val, Debruijn::ZERO, &x)
+    pub fn open0(&self, x: &RcValue) -> RcValue {
+        self.open(Debruijn::ZERO, &x)
     }
 
-    pub fn open(val: &RcValue, level: Debruijn, x: &RcValue) -> RcValue {
-        match *val.inner {
-            Value::Type => val.clone(),
+    pub fn open(&self, level: Debruijn, x: &RcValue) -> RcValue {
+        match *self.inner {
+            Value::Type => self.clone(),
             Value::Lam(ref scope) => {
                 let param_ty = match scope.unsafe_param.1.as_ref() {
                     None => None,
-                    Some(ref param_ty) => Some(RcValue::open(param_ty, level, x)),
+                    Some(ref param_ty) => Some(param_ty.open(level, x)),
                 };
-                let body = RcValue::open(&scope.unsafe_body, level.succ(), x);
+                let body = scope.unsafe_body.open(level.succ(), x);
 
                 Value::Lam(Scope {
                     unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
@@ -218,8 +218,8 @@ impl RcValue {
                 }).into()
             }
             Value::Pi(ref scope) => {
-                let param_ty = RcValue::open(&scope.unsafe_param.1, level, x);
-                let body = RcValue::open(&scope.unsafe_body, level.succ(), x);
+                let param_ty = scope.unsafe_param.1.open(level, x);
+                let body = scope.unsafe_body.open(level.succ(), x);
 
                 Value::Pi(Scope {
                     unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
@@ -228,11 +228,11 @@ impl RcValue {
             }
             Value::Var(ref var) => match var.open(level) {
                 true => x.clone(),
-                false => val.clone(),
+                false => self.clone(),
             },
             Value::App(ref fn_expr, ref arg_expr) => {
-                let fn_expr = RcValue::open(fn_expr, level, x);
-                let arg = RcValue::open(arg_expr, level, x);
+                let fn_expr = fn_expr.open(level, x);
+                let arg = arg_expr.open(level, x);
 
                 Value::App(fn_expr.clone(), arg).into() // FIXME: eval?
             }

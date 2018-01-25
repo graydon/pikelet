@@ -1,6 +1,6 @@
 //! Contexts and type checking
 
-use core::{CTerm, ITerm, RcCTerm, RcITerm, RcType, RcValue, Value};
+use core::{CTerm, ITerm, RcCTerm, RcITerm, RcType, Value};
 use var::{Debruijn, Name, Named, Scope, Var};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -154,7 +154,7 @@ impl<'a> Context<'a> {
                 match *fn_type.inner {
                     Value::Pi(ref scope) => {
                         self.check(arg_expr, &scope.unsafe_param.1)?; // 2.
-                        let body_ty = RcValue::open0(&scope.unsafe_body, &arg_expr.eval()); // 3.
+                        let body_ty = scope.unsafe_body.open0(&arg_expr.eval()); // 3.
                         Ok(body_ty)
                     }
                     // TODO: More error info
@@ -167,6 +167,8 @@ impl<'a> Context<'a> {
 
 #[cfg(test)]
 mod tests {
+    use core::RcValue;
+
     use super::*;
 
     fn parse(src: &str) -> RcITerm {
