@@ -198,13 +198,6 @@ impl LocallyNameless for RcValue {
 }
 
 impl RcValue {
-    pub fn eval_app(fn_expr: RcValue, arg: RcValue) -> RcValue {
-        match *fn_expr.inner {
-            Value::Lam(ref scope) => RcValue::open0(&scope.unsafe_body, &arg),
-            _ => Value::App(fn_expr.clone(), arg).into(),
-        }
-    }
-
     pub fn open0(val: &RcValue, x: &RcValue) -> RcValue {
         RcValue::open(val, Debruijn::ZERO, &x)
     }
@@ -241,7 +234,7 @@ impl RcValue {
                 let fn_expr = RcValue::open(fn_expr, level, x);
                 let arg = RcValue::open(arg_expr, level, x);
 
-                RcValue::eval_app(fn_expr, arg)
+                Value::App(fn_expr.clone(), arg).into() // FIXME: eval?
             }
         }
     }
@@ -385,7 +378,10 @@ impl RcITerm {
                 let fn_expr = fn_expr.eval(); // 1.
                 let arg = arg.eval(); // 2.
 
-                RcValue::eval_app(fn_expr, arg)
+                match *fn_expr.inner {
+                    Value::Lam(ref scope) => RcValue::open0(&scope.unsafe_body, &arg),
+                    _ => Value::App(fn_expr.clone(), arg).into(),
+                }
             }
         }
     }
