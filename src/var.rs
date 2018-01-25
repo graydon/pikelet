@@ -75,6 +75,8 @@ impl<T: LocallyNameless> LocallyNameless for Option<T> {
 pub enum Name {
     /// Names originating from user input
     User(String),
+    /// A variable that was generated from a fresh name generator
+    Gen(GenId),
     /// Abstract names, `_`
     ///
     /// These are generally used in non-dependent function types, ie:
@@ -116,8 +118,35 @@ impl fmt::Display for Name {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             Name::User(ref name) => write!(f, "{}", name),
+            Name::Gen(ref id) => write!(f, "{}", id),
             Name::Abstract => write!(f, "_"),
         }
+    }
+}
+
+pub struct FreshGen {
+    next_gen: u32,
+}
+
+impl FreshGen {
+    pub fn new() -> FreshGen {
+        FreshGen { next_gen: 0 }
+    }
+
+    pub fn next_gen(&mut self) -> GenId {
+        let next_gen = self.next_gen;
+        self.next_gen += 1;
+        GenId(next_gen)
+    }
+}
+
+/// A generated id
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct GenId(u32);
+
+impl fmt::Display for GenId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "${}", self.0)
     }
 }
 
