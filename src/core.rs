@@ -103,54 +103,13 @@ pub enum Value {
     Lam(Scope<Named<Option<RcValue>>, RcValue>),
     /// A pi type
     Pi(Scope<Named<RcValue>, RcValue>),
-    /// Neutral values
-    Neutral(RcNeutral),
-}
-
-impl From<RcNeutral> for Value {
-    fn from(src: RcNeutral) -> Value {
-        Value::Neutral(src)
-    }
-}
-
-impl From<Neutral> for Value {
-    fn from(src: Neutral) -> Value {
-        Value::from(RcNeutral::from(src))
-    }
-}
-
-impl From<Var> for Value {
-    fn from(src: Var) -> Value {
-        Value::from(Neutral::from(src))
-    }
+    /// Variables
+    Var(Var),
+    /// Application of normal forms to neutral forms
+    App(RcValue, RcValue),
 }
 
 impl fmt::Display for Value {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        self.to_doc(pretty::Context::default())
-            .group()
-            .render_fmt(f.width().unwrap_or(80), f)
-    }
-}
-
-/// Neutral forms
-///
-/// https://cs.stackexchange.com/questions/69434/intuitive-explanation-of-neutral-normal-form-in-lambda-calculus
-#[derive(Debug, Clone, PartialEq)]
-pub enum Neutral {
-    /// Variabls
-    Var(Var),
-    /// Application of normal forms to neutral forms
-    App(RcNeutral, RcValue),
-}
-
-impl From<Var> for Neutral {
-    fn from(src: Var) -> Neutral {
-        Neutral::Var(src)
-    }
-}
-
-impl fmt::Display for Neutral {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         self.to_doc(pretty::Context::default())
             .group()
@@ -186,7 +145,6 @@ macro_rules! make_wrapper {
 make_wrapper!(RcCTerm, CTerm);
 make_wrapper!(RcITerm, ITerm);
 make_wrapper!(RcValue, Value);
-make_wrapper!(RcNeutral, Neutral);
 
 /// Types are at the term level, so this is just an alias
 pub type Type = Value;
@@ -230,16 +188,8 @@ impl LocallyNameless for RcValue {
             Value::Type => {}
             Value::Lam(ref mut scope) => scope.close(on_free),
             Value::Pi(ref mut scope) => scope.close(on_free),
-            Value::Neutral(ref mut stuck) => stuck.close(on_free),
-        }
-    }
-}
-
-impl LocallyNameless for RcNeutral {
-    fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
-        match *Rc::make_mut(&mut self.inner) {
-            Neutral::Var(ref mut var) => var.close(on_free),
-            Neutral::App(ref mut fn_expr, ref mut arg_expr) => {
+            Value::Var(ref mut var) => var.close(on_free),
+            Value::App(ref mut fn_expr, ref mut arg_expr) => {
                 fn_expr.close(on_free);
                 arg_expr.close(on_free);
             }
@@ -248,68 +198,48 @@ impl LocallyNameless for RcNeutral {
 }
 
 impl RcValue {
-    pub fn eval_app(fn_expr: RcValue, arg: RcValue) -> Result<RcValue, EvalError> {
+    pub fn eval_app(fn_expr: RcValue, arg: RcValue) -> RcValue {
         match *fn_expr.inner {
             Value::Lam(ref scope) => RcValue::open0(&scope.unsafe_body, &arg),
-            Value::Neutral(ref stuck) => Ok(Value::from(Neutral::App(stuck.clone(), arg)).into()),
-            _ => Err(EvalError::ArgAppliedToNonFunction {
-                expr: fn_expr.clone(),
-                arg: arg,
-            }),
+            _ => Value::App(fn_expr.clone(), arg).into(),
         }
     }
 
-    pub fn open0(val: &RcValue, x: &RcValue) -> Result<RcValue, EvalError> {
+    pub fn open0(val: &RcValue, x: &RcValue) -> RcValue {
         RcValue::open(val, Debruijn::ZERO, &x)
     }
 
-    pub fn open(val: &RcValue, level: Debruijn, x: &RcValue) -> Result<RcValue, EvalError> {
+    pub fn open(val: &RcValue, level: Debruijn, x: &RcValue) -> RcValue {
         match *val.inner {
-            Value::Type => Ok(val.clone()),
+            Value::Type => val.clone(),
             Value::Lam(ref scope) => {
                 let param_ty = match scope.unsafe_param.1.as_ref() {
                     None => None,
-                    Some(ref param_ty) => Some(RcValue::open(param_ty, level, x)?),
+                    Some(ref param_ty) => Some(RcValue::open(param_ty, level, x)),
                 };
-                let body = RcValue::open(&scope.unsafe_body, level.succ(), x)?;
+                let body = RcValue::open(&scope.unsafe_body, level.succ(), x);
 
-                Ok(
-                    Value::Lam(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
-                        unsafe_body: body,
-                    }).into(),
-                )
+                Value::Lam(Scope {
+                    unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
+                    unsafe_body: body,
+                }).into()
             }
             Value::Pi(ref scope) => {
-                let param_ty = RcValue::open(&scope.unsafe_param.1, level, x)?;
-                let body = RcValue::open(&scope.unsafe_body, level.succ(), x)?;
+                let param_ty = RcValue::open(&scope.unsafe_param.1, level, x);
+                let body = RcValue::open(&scope.unsafe_body, level.succ(), x);
 
-                Ok(
-                    Value::Pi(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
-                        unsafe_body: body,
-                    }).into(),
-                )
+                Value::Pi(Scope {
+                    unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
+                    unsafe_body: body,
+                }).into()
             }
-            Value::Neutral(ref stuck) => RcNeutral::open(stuck, level, x),
-        }
-    }
-}
-
-impl RcNeutral {
-    pub fn open0(val: &RcNeutral, x: &RcValue) -> Result<RcValue, EvalError> {
-        RcNeutral::open(val, Debruijn::ZERO, &x)
-    }
-
-    pub fn open(val: &RcNeutral, level: Debruijn, x: &RcValue) -> Result<RcValue, EvalError> {
-        match *val.inner {
-            Neutral::Var(ref var) => match var.open(level) {
-                true => Ok(x.clone()),
-                false => Ok(Value::from(val.clone()).into()),
+            Value::Var(ref var) => match var.open(level) {
+                true => x.clone(),
+                false => val.clone(),
             },
-            Neutral::App(ref fn_expr, ref arg_expr) => {
-                let fn_expr = RcNeutral::open(fn_expr, level, x)?;
-                let arg = RcValue::open(arg_expr, level, x)?;
+            Value::App(ref fn_expr, ref arg_expr) => {
+                let fn_expr = RcValue::open(fn_expr, level, x);
+                let arg = RcValue::open(arg_expr, level, x);
 
                 RcValue::eval_app(fn_expr, arg)
             }
@@ -379,14 +309,8 @@ impl RcITerm {
 
 // Evaluation
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum EvalError {
-    /// Attempted to apply an argument to a term that is not a function
-    ArgAppliedToNonFunction { arg: RcValue, expr: RcValue },
-}
-
 impl RcCTerm {
-    pub fn eval(&self) -> Result<RcValue, EvalError> {
+    pub fn eval(&self) -> RcValue {
         // e ⇓ v
         match *self.inner {
             CTerm::Inf(ref inf) => inf.eval(),
@@ -395,21 +319,19 @@ impl RcCTerm {
             // ───────────────── (EVAL/LAM)
             //     λx.e ⇓ λx→v
             CTerm::Lam(ref scope) => {
-                let body_expr = scope.unsafe_body.eval()?; // 1.
+                let body_expr = scope.unsafe_body.eval(); // 1.
 
-                Ok(
-                    Value::Lam(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), None),
-                        unsafe_body: body_expr,
-                    }).into(),
-                )
+                Value::Lam(Scope {
+                    unsafe_param: Named(scope.unsafe_param.0.clone(), None),
+                    unsafe_body: body_expr,
+                }).into()
             }
         }
     }
 }
 
 impl RcITerm {
-    pub fn eval(&self) -> Result<RcValue, EvalError> {
+    pub fn eval(&self) -> RcValue {
         // e ⇓ v
         match *self.inner {
             //  1.  e ⇓ v
@@ -421,26 +343,24 @@ impl RcITerm {
 
             // ───────────── (EVAL/TYPE)
             //  Type ⇓ Type
-            ITerm::Type => Ok(Value::Type.into()),
+            ITerm::Type => Value::Type.into(),
 
             // ─────── (EVAL/Var)
             //  x ⇓ x
-            ITerm::Var(ref var) => Ok(Value::from(var.clone()).into()),
+            ITerm::Var(ref var) => Value::Var(var.clone()).into(),
 
             //  1.  ρ ⇓ τ
             //  2.  e ⇓ v
             // ──────────────────────── (EVAL/LAM-ANN)
             //      λx:ρ→e ⇓ λx:τ→v
             ITerm::Lam(ref scope) => {
-                let param_ty = scope.unsafe_param.1.eval()?; // 1.
-                let body_expr = scope.unsafe_body.eval()?; // 2.
+                let param_ty = scope.unsafe_param.1.eval(); // 1.
+                let body_expr = scope.unsafe_body.eval(); // 2.
 
-                Ok(
-                    Value::Lam(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), Some(param_ty)),
-                        unsafe_body: body_expr,
-                    }).into(),
-                )
+                Value::Lam(Scope {
+                    unsafe_param: Named(scope.unsafe_param.0.clone(), Some(param_ty)),
+                    unsafe_body: body_expr,
+                }).into()
             }
 
             //  1.  ρ₁ ⇓ τ₁
@@ -448,15 +368,13 @@ impl RcITerm {
             // ─────────────────────────── (EVAL/PI-ANN)
             //      (x:ρ₁)→ρ₂ ⇓ (x:τ₁)→τ₂
             ITerm::Pi(ref scope) => {
-                let param_ty = scope.unsafe_param.1.eval()?; // 1.
-                let body_ty = scope.unsafe_body.eval()?; // 2.
+                let param_ty = scope.unsafe_param.1.eval(); // 1.
+                let body_ty = scope.unsafe_body.eval(); // 2.
 
-                Ok(
-                    Value::Pi(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
-                        unsafe_body: body_ty,
-                    }).into(),
-                )
+                Value::Pi(Scope {
+                    unsafe_param: Named(scope.unsafe_param.0.clone(), param_ty),
+                    unsafe_body: body_ty,
+                }).into()
             }
 
             //  1.  e₁ ⇓ λx→v₁
@@ -464,8 +382,8 @@ impl RcITerm {
             // ───────────────────── (EVAL/APP)
             //      e₁ e₂ ⇓ v₂
             ITerm::App(ref fn_expr, ref arg) => {
-                let fn_expr = fn_expr.eval()?; // 1.
-                let arg = arg.eval()?; // 2.
+                let fn_expr = fn_expr.eval(); // 1.
+                let arg = arg.eval(); // 2.
 
                 RcValue::eval_app(fn_expr, arg)
             }
@@ -550,17 +468,14 @@ mod tests {
         fn var() {
             let x = Name::user("x");
 
-            assert_eq!(
-                parse(r"x").eval().unwrap(),
-                Value::from(Var::Free(x)).into(),
-            );
+            assert_eq!(parse(r"x").eval(), Value::Var(Var::Free(x)).into(),);
         }
 
         #[test]
         fn ty() {
             let ty: RcValue = Value::Type.into();
 
-            assert_eq!(parse(r"Type").eval().unwrap(), ty);
+            assert_eq!(parse(r"Type").eval(), ty);
         }
 
         #[test]
@@ -569,10 +484,10 @@ mod tests {
             let ty: RcValue = Value::Type.into();
 
             assert_eq!(
-                parse(r"\x : Type => x").eval().unwrap(),
+                parse(r"\x : Type => x").eval(),
                 Value::Lam(Scope::bind(
                     Named(x.clone(), Some(ty)),
-                    Value::from(Var::Free(x)).into(),
+                    Value::Var(Var::Free(x)).into(),
                 )).into(),
             );
         }
@@ -583,10 +498,10 @@ mod tests {
             let ty: RcValue = Value::Type.into();
 
             assert_eq!(
-                parse(r"(x : Type) -> x").eval().unwrap(),
+                parse(r"(x : Type) -> x").eval(),
                 Value::Pi(Scope::bind(
                     Named(x.clone(), ty),
-                    Value::from(Var::Free(x)).into(),
+                    Value::Var(Var::Free(x)).into(),
                 )).into(),
             );
         }
@@ -600,17 +515,15 @@ mod tests {
                 Value::Pi(Scope::bind(Named(Name::Abstract, ty.clone()), ty.clone())).into();
 
             assert_eq!(
-                parse(r"\x : Type -> Type => \y : Type => x y")
-                    .eval()
-                    .unwrap(),
+                parse(r"\x : Type -> Type => \y : Type => x y").eval(),
                 Value::Lam(Scope::bind(
                     Named(x.clone(), Some(ty_arr)),
                     Value::Lam(Scope::bind(
                         Named(y.clone(), Some(ty)),
-                        Value::from(Neutral::App(
-                            Neutral::from(Var::Free(x)).into(),
-                            Value::from(Var::Free(y)).into(),
-                        )).into(),
+                        Value::App(
+                            Value::Var(Var::Free(x)).into(),
+                            Value::Var(Var::Free(y)).into(),
+                        ).into(),
                     )).into(),
                 )).into(),
             );
@@ -625,17 +538,15 @@ mod tests {
                 Value::Pi(Scope::bind(Named(Name::Abstract, ty.clone()), ty.clone())).into();
 
             assert_eq!(
-                parse(r"(x : Type -> Type) -> \y : Type => x y")
-                    .eval()
-                    .unwrap(),
+                parse(r"(x : Type -> Type) -> \y : Type => x y").eval(),
                 Value::Pi(Scope::bind(
                     Named(x.clone(), ty_arr),
                     Value::Lam(Scope::bind(
                         Named(y.clone(), Some(ty)),
-                        Value::from(Neutral::App(
-                            Neutral::from(Var::Free(x)).into(),
-                            Value::from(Var::Free(y)).into(),
-                        )).into(),
+                        Value::App(
+                            Value::Var(Var::Free(x)).into(),
+                            Value::Var(Var::Free(y)).into(),
+                        ).into(),
                     )).into(),
                 )).into(),
             );

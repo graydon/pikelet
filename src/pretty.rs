@@ -1,6 +1,6 @@
 extern crate pretty;
 
-use core::{CTerm, ITerm, Neutral, RcCTerm, RcITerm, RcNeutral, RcValue, Value};
+use core::{CTerm, ITerm, RcCTerm, RcITerm, RcValue, Value};
 use var::Name;
 
 use self::pretty::{BoxDoc, Doc};
@@ -244,30 +244,16 @@ impl ToDoc for Value {
                 &scope.unsafe_param.1,
                 &scope.unsafe_body,
             ),
-            Value::Neutral(ref svalue) => svalue.to_doc(context),
+            Value::Var(ref var) => match context.debug_indices {
+                true => Doc::text(format!("{:#}", var)),
+                false => Doc::as_string(var),
+            },
+            Value::App(ref fn_term, ref arg_term) => pretty_app(context, fn_term, arg_term),
         }
     }
 }
 
 impl ToDoc for RcValue {
-    fn to_doc(&self, context: Context) -> Doc<BoxDoc> {
-        self.inner.to_doc(context)
-    }
-}
-
-impl ToDoc for Neutral {
-    fn to_doc(&self, context: Context) -> Doc<BoxDoc> {
-        match *self {
-            Neutral::Var(ref var) => match context.debug_indices {
-                true => Doc::text(format!("{:#}", var)),
-                false => Doc::as_string(var),
-            },
-            Neutral::App(ref fn_term, ref arg_term) => pretty_app(context, fn_term, arg_term),
-        }
-    }
-}
-
-impl ToDoc for RcNeutral {
     fn to_doc(&self, context: Context) -> Doc<BoxDoc> {
         self.inner.to_doc(context)
     }

@@ -1,11 +1,10 @@
 //! Contexts and type checking
 
-use core::{CTerm, EvalError, ITerm, RcCTerm, RcITerm, RcType, RcValue, Value};
+use core::{CTerm, ITerm, RcCTerm, RcITerm, RcType, RcValue, Value};
 use var::{Debruijn, Name, Named, Scope, Var};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
-    Eval(EvalError),
     IllegalApplication,
     ExpectedFunction {
         lam_expr: RcCTerm,
@@ -17,12 +16,6 @@ pub enum TypeError {
         expected: RcType,
     },
     UnboundVariable(Name),
-}
-
-impl From<EvalError> for TypeError {
-    fn from(src: EvalError) -> TypeError {
-        TypeError::Eval(src)
-    }
 }
 
 /// Contexts
@@ -99,7 +92,7 @@ impl<'a> Context<'a> {
             //      Γ ⊢ (e : ρ) :↑ τ
             ITerm::Ann(ref expr, ref ty) => {
                 self.check(ty, &Value::Type.into())?; // 1.
-                let simp_ty = ty.eval()?; // 2.
+                let simp_ty = ty.eval(); // 2.
                 self.check(expr, &simp_ty)?; // 3.
                 Ok(simp_ty)
             }
@@ -115,7 +108,7 @@ impl<'a> Context<'a> {
             //      Γ ⊢ λx:ρ→e :↑ (x:τ₁)→τ₂
             ITerm::Lam(ref scope) => {
                 self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
-                let simp_param_ty = scope.unsafe_param.1.eval()?; // 2.
+                let simp_param_ty = scope.unsafe_param.1.eval(); // 2.
                 let body_ty = self.extend(simp_param_ty.clone())
                     .infer(&scope.unsafe_body)?; // 3.
 
@@ -134,7 +127,7 @@ impl<'a> Context<'a> {
             //      Γ ⊢ (x:ρ₁)→ρ₂ :↑ Type
             ITerm::Pi(ref scope) => {
                 self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
-                let simp_param_ty = scope.unsafe_param.1.eval()?; // 2.
+                let simp_param_ty = scope.unsafe_param.1.eval(); // 2.
                 self.extend(simp_param_ty)
                     .check(&scope.unsafe_body, &Value::Type.into())?; // 3.
                 Ok(Value::Type.into())
@@ -161,7 +154,7 @@ impl<'a> Context<'a> {
                 match *fn_type.inner {
                     Value::Pi(ref scope) => {
                         self.check(arg_expr, &scope.unsafe_param.1)?; // 2.
-                        let body_ty = RcValue::open0(&scope.unsafe_body, &arg_expr.eval()?)?; // 3.
+                        let body_ty = RcValue::open0(&scope.unsafe_body, &arg_expr.eval()); // 3.
                         Ok(body_ty)
                     }
                     // TODO: More error info
@@ -175,7 +168,6 @@ impl<'a> Context<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::Neutral;
 
     fn parse(src: &str) -> RcITerm {
         RcITerm::from_parse(&src.parse().unwrap()).unwrap()
@@ -183,8 +175,8 @@ mod tests {
 
     #[test]
     fn extend_lookup_ty() {
-        let x: RcValue = Value::from(Neutral::Var(Var::Free(Name::user("x")))).into();
-        let y: RcValue = Value::from(Neutral::Var(Var::Free(Name::user("y")))).into();
+        let x: RcValue = Value::Var(Var::Free(Name::user("x"))).into();
+        let y: RcValue = Value::Var(Var::Free(Name::user("y"))).into();
 
         let context0 = Context::Empty;
 
@@ -227,7 +219,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -240,7 +232,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -253,7 +245,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -278,7 +270,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -303,7 +295,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -316,7 +308,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -329,7 +321,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -342,7 +334,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -355,7 +347,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -368,7 +360,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -387,7 +379,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -400,7 +392,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -420,7 +412,7 @@ mod tests {
 
             assert_eq!(
                 ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval().unwrap(),
+                parse(expected_ty).eval(),
             );
         }
 
@@ -436,7 +428,7 @@ mod tests {
 
                 assert_eq!(
                     ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval().unwrap(),
+                    parse(expected_ty).eval(),
                 );
             }
 
@@ -455,7 +447,7 @@ mod tests {
 
                 assert_eq!(
                     ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval().unwrap(),
+                    parse(expected_ty).eval(),
                 );
             }
 
@@ -474,7 +466,7 @@ mod tests {
 
                 assert_eq!(
                     ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval().unwrap(),
+                    parse(expected_ty).eval(),
                 );
             }
 
@@ -493,7 +485,7 @@ mod tests {
 
                 assert_eq!(
                     ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval().unwrap(),
+                    parse(expected_ty).eval(),
                 );
             }
         }
