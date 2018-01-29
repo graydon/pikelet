@@ -43,23 +43,15 @@ pub trait LocallyNameless: Sized {
     /// Capture some free variables in the term
     fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>);
 
-    /// Capture a single free variable
-    fn close0(&mut self, name: &Name) {
-        self.close(&|found| if name == found {
-            Some(Debruijn::ZERO)
-        } else {
-            None
-        });
-    }
-}
+    fn open(&mut self, on_bound: &Fn(&Debruijn) -> Option<Name>);
 
-/// Locally nameless patterns
-pub trait Pattern: LocallyNameless {
-    fn handle_free(&self, level: Debruijn, name: &Name) -> Option<Debruijn>;
+    fn subst(&self);
 }
 
 impl LocallyNameless for () {
     fn close(&mut self, _: &Fn(&Name) -> Option<Debruijn>) {}
+    fn open(&mut self, _: &Fn(&Debruijn) -> Option<Name>) {}
+    fn subst(&self) {}
 }
 
 impl<T: LocallyNameless> LocallyNameless for Option<T> {
@@ -68,6 +60,22 @@ impl<T: LocallyNameless> LocallyNameless for Option<T> {
             x.close(on_free);
         }
     }
+
+    fn open(&mut self, on_bound: &Fn(&Debruijn) -> Option<Name>) {
+        if let Some(ref mut x) = *self {
+            x.open(on_bound);
+        }
+    }
+
+    fn subst(&self) {
+        unimplemented!()
+    }
+}
+
+/// Locally nameless patterns
+pub trait Pattern: LocallyNameless {
+    fn handle_free(&self, level: Debruijn, name: &Name) -> Option<Debruijn>;
+    fn freshen(&mut self, gen: &mut FreshGen);
 }
 
 /// The name of a free variable
@@ -166,6 +174,14 @@ impl<T: LocallyNameless> LocallyNameless for Named<T> {
     fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
         self.1.close(on_free);
     }
+
+    fn open(&mut self, on_bound: &Fn(&Debruijn) -> Option<Name>) {
+        self.1.open(on_bound);
+    }
+
+    fn subst(&self) {
+        unimplemented!()
+    }
 }
 
 impl<T: LocallyNameless> Pattern for Named<T> {
@@ -175,6 +191,10 @@ impl<T: LocallyNameless> Pattern for Named<T> {
         } else {
             None
         }
+    }
+
+    fn freshen(&mut self, gen: &mut FreshGen) {
+        unimplemented!()
     }
 }
 
@@ -233,14 +253,19 @@ impl LocallyNameless for Var {
             },
         };
     }
-}
 
-impl Var {
-    pub fn open(&self, level: Debruijn) -> bool {
-        match *self {
-            Var::Bound(Named(_, b)) if b == level => true,
-            Var::Bound(_) | Var::Free(_) => false,
-        }
+    fn open(&mut self, on_bound: &Fn(&Debruijn) -> Option<Name>) {
+        *self = match *self {
+            Var::Bound(ref bound) => match on_bound(&bound.1) {
+                None => return,
+                Some(name) => Var::Free(name),
+            },
+            Var::Free(_) => return,
+        };
+    }
+
+    fn subst(&self) {
+        unimplemented!()
     }
 }
 
@@ -267,12 +292,31 @@ impl<P: Pattern, T: LocallyNameless> Scope<P, T> {
             unsafe_body: body,
         }
     }
+
+    pub fn unbind(self, gen: &mut FreshGen) -> (P, T) {
+        let mut param = self.unsafe_param;
+        let mut body = self.unsafe_body;
+
+        param.freshen(gen);
+        body.open(&|index| param.handle_bound(Debruijn::ZERO, index));
+
+        (param, body)
+    }
 }
 
 impl<P: Pattern, T: LocallyNameless> LocallyNameless for Scope<P, T> {
     fn close(&mut self, on_free: &Fn(&Name) -> Option<Debruijn>) {
         self.unsafe_param.close(on_free);
         self.unsafe_body
-            .close(&|name| on_free(name).map(Debruijn::succ));
+            .close(&|name| on_free(name).map(|var| var.succ()));
+    }
+
+    fn open(&mut self, on_bound: &Fn(&Debruijn) -> Option<Name>) {
+        self.unsafe_param.open(on_bound);
+        self.unsafe_body.open(&|var| on_bound(&var.succ()));
+    }
+
+    fn subst(&self) {
+        unimplemented!()
     }
 }

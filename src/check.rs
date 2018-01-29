@@ -1,7 +1,7 @@
 //! Contexts and type checking
 
 use core::{CTerm, ITerm, RcCTerm, RcITerm, RcType, Value};
-use var::{Debruijn, Name, Named, Scope, Var};
+use var::{Debruijn, FreshGen, LocallyNameless, Name, Named, Scope, Var};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TypeError {
@@ -48,14 +48,19 @@ impl<'a> Context<'a> {
     }
 
     /// Check that the type of an expression is compatible with the expected type
-    pub fn check(&self, expr: &RcCTerm, expected_ty: &RcType) -> Result<(), TypeError> {
+    pub fn check(
+        &self,
+        gen: &mut FreshGen,
+        expr: &RcCTerm,
+        expected_ty: &RcType,
+    ) -> Result<(), TypeError> {
         // Γ ⊢ e :↓ τ
         match *expr.inner {
             //  1.  Γ ⊢ e :↑ τ
             // ─────────────────── (CHECK/INFER)
             //      Γ ⊢ e :↓ τ
             CTerm::Inf(ref inferrable_expr) => {
-                let inferred_ty = self.infer(inferrable_expr)?; // 1.
+                let inferred_ty = self.infer(gen, inferrable_expr)?; // 1.
                 match &inferred_ty == expected_ty {
                     true => Ok(()),
                     false => Err(TypeError::Mismatch {
@@ -71,8 +76,11 @@ impl<'a> Context<'a> {
             //      Γ ⊢ λx→e :↓ (x:τ₁)→τ₂
             CTerm::Lam(ref lam_scope) => match *expected_ty.inner {
                 Value::Pi(ref pi_scope) => {
-                    self.extend(pi_scope.unsafe_param.1.clone())
-                        .check(&lam_scope.unsafe_body, &pi_scope.unsafe_body) // 1.
+                    self.extend(pi_scope.unsafe_param.1.clone()).check(
+                        gen,
+                        &lam_scope.unsafe_body,
+                        &pi_scope.unsafe_body,
+                    ) // 1.
                 }
                 _ => Err(TypeError::ExpectedFunction {
                     lam_expr: expr.clone(),
@@ -82,7 +90,7 @@ impl<'a> Context<'a> {
         }
     }
 
-    pub fn infer(&self, expr: &RcITerm) -> Result<RcType, TypeError> {
+    pub fn infer(&self, gen: &mut FreshGen, expr: &RcITerm) -> Result<RcType, TypeError> {
         // Γ ⊢ e :↑ τ
         match *expr.inner {
             //  1.  Γ ⊢ ρ₁ :↓ Type
@@ -91,9 +99,9 @@ impl<'a> Context<'a> {
             // ───────────────────────── (INFER/ANN)
             //      Γ ⊢ (e : ρ) :↑ τ
             ITerm::Ann(ref expr, ref ty) => {
-                self.check(ty, &Value::Type.into())?; // 1.
-                let simp_ty = ty.eval(); // 2.
-                self.check(expr, &simp_ty)?; // 3.
+                self.check(gen, ty, &Value::Type.into())?; // 1.
+                let simp_ty = ty.eval(gen); // 2.
+                self.check(gen, expr, &simp_ty)?; // 3.
                 Ok(simp_ty)
             }
 
@@ -107,17 +115,13 @@ impl<'a> Context<'a> {
             // ─────────────────────────────── (INFER/LAM)
             //      Γ ⊢ λx:ρ→e :↑ (x:τ₁)→τ₂
             ITerm::Lam(ref scope) => {
-                self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
-                let simp_param_ty = scope.unsafe_param.1.eval(); // 2.
-                let body_ty = self.extend(simp_param_ty.clone())
-                    .infer(&scope.unsafe_body)?; // 3.
+                let (param, body) = scope.unbind(&mut gen);
 
-                Ok(
-                    Value::Pi(Scope {
-                        unsafe_param: Named(scope.unsafe_param.0.clone(), simp_param_ty),
-                        unsafe_body: body_ty, // shift??
-                    }).into(),
-                )
+                self.check(gen, &param.1, &Value::Type.into())?; // 1.
+                let simp_param_ty = param.1.eval(gen); // 2.
+                let body_ty = self.extend(simp_param_ty.clone()).infer(gen, &body)?; // 3.
+
+                Ok(Value::Pi(Scope::bind(Named(param.0.clone(), simp_param_ty), body_ty)).into())
             }
 
             //  1.  Γ ⊢ ρ₁ :↓ Type
@@ -126,10 +130,13 @@ impl<'a> Context<'a> {
             // ────────────────────────────── (INFER/PI)
             //      Γ ⊢ (x:ρ₁)→ρ₂ :↑ Type
             ITerm::Pi(ref scope) => {
-                self.check(&scope.unsafe_param.1, &Value::Type.into())?; // 1.
-                let simp_param_ty = scope.unsafe_param.1.eval(); // 2.
+                let (param, body) = scope.unbind(&mut gen);
+
+                self.check(gen, &param.1, &Value::Type.into())?; // 1.
+                let simp_param_ty = param.1.eval(gen); // 2.
                 self.extend(simp_param_ty)
-                    .check(&scope.unsafe_body, &Value::Type.into())?; // 3.
+                    .check(gen, &body, &Value::Type.into())?; // 3.
+
                 Ok(Value::Type.into())
             }
 
@@ -150,11 +157,14 @@ impl<'a> Context<'a> {
             // ────────────────────────────── (INFER/APP)
             //      Γ ⊢ e₁ e₂ :↑ τ₃
             ITerm::App(ref fn_expr, ref arg_expr) => {
-                let fn_type = self.infer(fn_expr)?; // 1.
+                let fn_type = self.infer(gen, fn_expr)?; // 1.
                 match *fn_type.inner {
                     Value::Pi(ref scope) => {
-                        self.check(arg_expr, &scope.unsafe_param.1)?; // 2.
-                        let body_ty = scope.unsafe_body.open0(&arg_expr.eval()); // 3.
+                        let (param, body) = scope.unbind(gen);
+
+                        self.check(gen, arg_expr, &param.1)?; // 2.
+                        let body_ty = body.subst(param, &arg_expr.eval(gen)); // 3.
+
                         Ok(body_ty)
                     }
                     // TODO: More error info
@@ -202,12 +212,13 @@ mod tests {
         #[test]
         fn free() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"x";
             let x = Name::user("x");
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)),
+                ctx.infer(&mut gen, &parse(given_expr)),
                 Err(TypeError::UnboundVariable(x)),
             );
         }
@@ -215,49 +226,53 @@ mod tests {
         #[test]
         fn ty() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"Type";
             let expected_ty = r"Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn ann_ty_id() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a => a) : Type -> Type";
             let expected_ty = r"Type -> Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn ann_arrow_ty_id() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a => a) : (Type -> Type) -> (Type -> Type)";
             let expected_ty = r"(Type -> Type) -> (Type -> Type)";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn ann_id_as_ty() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a => a) : Type";
 
-            match ctx.infer(&parse(given_expr)) {
+            match ctx.infer(&mut gen, &parse(given_expr)) {
                 Err(TypeError::ExpectedFunction { .. }) => {}
                 other => panic!("unexpected result: {:#?}", other),
             }
@@ -266,24 +281,26 @@ mod tests {
         #[test]
         fn app() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a : Type => a) Type";
             let expected_ty = r"Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn app_ty() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"Type Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)),
+                ctx.infer(&mut gen, &parse(given_expr)),
                 Err(TypeError::IllegalApplication),
             )
         }
@@ -291,84 +308,91 @@ mod tests {
         #[test]
         fn lam() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"\a : Type => a";
             let expected_ty = r"(a : Type) -> Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn pi() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(a : Type) -> a";
             let expected_ty = r"Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn id() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"\a : Type => \x : a => x";
             let expected_ty = r"(a : Type) -> a -> a";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn id_ann() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a => \x : a => x) : (A : Type) -> A -> A";
             let expected_ty = r"(a : Type) -> a -> a";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn id_app_ty_arr_ty() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a : Type => \x : a => x) Type (Type -> Type)";
             let expected_ty = r"Type -> Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn id_app_arr_pi_ty() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"(\a : Type => \x : a => x) (Type -> Type) (\x : Type => Type)";
             let expected_ty = r"\x : Type => Type";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn apply() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"
                 \a : Type => \b : Type =>
@@ -380,27 +404,29 @@ mod tests {
             ";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn const_() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"\a : Type => \b : Type => \x : a => \y : b => x";
             let expected_ty = r"(a : Type) -> (b : Type) -> a -> b -> a";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
         #[test]
         fn compose() {
             let ctx = Context::default();
+            let mut gen = FreshGen::new();
 
             let given_expr = r"
                 \a : Type => \b : Type => \c : Type =>
@@ -413,8 +439,8 @@ mod tests {
             ";
 
             assert_eq!(
-                ctx.infer(&parse(given_expr)).unwrap(),
-                parse(expected_ty).eval(),
+                ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                parse(expected_ty).eval(&mut gen),
             );
         }
 
@@ -424,19 +450,21 @@ mod tests {
             #[test]
             fn and() {
                 let ctx = Context::default();
+                let mut gen = FreshGen::new();
 
                 let given_expr = r"\p : Type => \q : Type => (c : Type) -> (p -> q -> c) -> c";
                 let expected_ty = r"Type -> Type -> Type";
 
                 assert_eq!(
-                    ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval(),
+                    ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                    parse(expected_ty).eval(&mut gen),
                 );
             }
 
             #[test]
             fn and_intro() {
                 let ctx = Context::default();
+                let mut gen = FreshGen::new();
 
                 let given_expr = r"
                     \p : Type => \q : Type => \x : p => \y : q =>
@@ -448,14 +476,15 @@ mod tests {
                 ";
 
                 assert_eq!(
-                    ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval(),
+                    ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                    parse(expected_ty).eval(&mut gen),
                 );
             }
 
             #[test]
             fn and_proj_left() {
                 let ctx = Context::default();
+                let mut gen = FreshGen::new();
 
                 let given_expr = r"
                     \p : Type => \q : Type => \pq : (c : Type) -> (p -> q -> c) -> c =>
@@ -467,14 +496,15 @@ mod tests {
                 ";
 
                 assert_eq!(
-                    ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval(),
+                    ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                    parse(expected_ty).eval(&mut gen),
                 );
             }
 
             #[test]
             fn and_proj_right() {
                 let ctx = Context::default();
+                let mut gen = FreshGen::new();
 
                 let given_expr = r"
                     \p : Type => \q : Type => \pq : (c : Type) -> (p -> q -> c) -> c =>
@@ -486,8 +516,8 @@ mod tests {
                 ";
 
                 assert_eq!(
-                    ctx.infer(&parse(given_expr)).unwrap(),
-                    parse(expected_ty).eval(),
+                    ctx.infer(&mut gen, &parse(given_expr)).unwrap(),
+                    parse(expected_ty).eval(&mut gen),
                 );
             }
         }
