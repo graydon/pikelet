@@ -13,10 +13,10 @@ mod normalize {
 
         let x = Name::user("x");
 
-        assert_eq!(
-            context.normalize(&parse(r"x")).unwrap(),
-            Value::Var(Var::Free(x)).into(),
-        );
+        let result = context.normalize(&parse(r"x")).unwrap();
+        println!("{}", result);
+
+        assert_eq!(result.value, Value::Var(Var::Free(x)).into(),);
     }
 
     #[test]
@@ -25,7 +25,7 @@ mod normalize {
 
         let ty: RcValue = Value::Type.into();
 
-        assert_eq!(context.normalize(&parse(r"Type")).unwrap(), ty);
+        assert_eq!(context.normalize(&parse(r"Type")).unwrap().value, ty);
     }
 
     #[test]
@@ -35,8 +35,11 @@ mod normalize {
         let x = Name::user("x");
         let ty: RcValue = Value::Type.into();
 
+        let result = context.normalize(&parse(r"\x : Type => x")).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.normalize(&parse(r"\x : Type => x")).unwrap(),
+            result.value,
             Value::Lam(
                 Named(x.clone(), Some(ty)),
                 Value::Var(Var::Bound(Named(x, Debruijn(0)))).into(),
@@ -51,8 +54,11 @@ mod normalize {
         let x = Name::user("x");
         let ty: RcValue = Value::Type.into();
 
+        let result = context.normalize(&parse(r"(x : Type) -> x")).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.normalize(&parse(r"(x : Type) -> x")).unwrap(),
+            result.value,
             Value::Pi(
                 Named(x.clone(), ty),
                 Value::Var(Var::Bound(Named(x, Debruijn(0)))).into(),
@@ -69,10 +75,13 @@ mod normalize {
         let ty: RcValue = Value::Type.into();
         let ty_arr: RcValue = Value::Pi(Named(Name::Abstract, ty.clone()), ty.clone()).into();
 
+        let result = context
+            .normalize(&parse(r"\x : Type -> Type => \y : Type => x y"))
+            .unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context
-                .normalize(&parse(r"\x : Type -> Type => \y : Type => x y"))
-                .unwrap(),
+            result.value,
             Value::Lam(
                 Named(x.clone(), Some(ty_arr)),
                 Value::Lam(
@@ -95,10 +104,13 @@ mod normalize {
         let ty: RcValue = Value::Type.into();
         let ty_arr: RcValue = Value::Pi(Named(Name::Abstract, ty.clone()), ty.clone()).into();
 
+        let result = context
+            .normalize(&parse(r"(x : Type -> Type) -> \y : Type => x y"))
+            .unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context
-                .normalize(&parse(r"(x : Type -> Type) -> \y : Type => x y"))
-                .unwrap(),
+            result.value,
             Value::Pi(
                 Named(x.clone(), ty_arr),
                 Value::Lam(
@@ -124,9 +136,12 @@ mod normalize {
         ";
         let expected_expr = r"\a : Type => \x : a => x";
 
+        let result = context.normalize(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.normalize(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_expr)).unwrap(),
+            result.value,
+            context.normalize(&parse(expected_expr)).unwrap().value,
         );
     }
 
@@ -145,9 +160,12 @@ mod normalize {
         ";
         let expected_expr = r"\a : Type => \x : a => x";
 
+        let result = context.normalize(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.normalize(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_expr)).unwrap(),
+            result.value,
+            context.normalize(&parse(expected_expr)).unwrap().value,
         );
     }
 }
@@ -175,9 +193,12 @@ mod infer {
         let given_expr = r"Type";
         let expected_ty = r"Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -188,9 +209,12 @@ mod infer {
         let given_expr = r"(\a => a) : Type -> Type";
         let expected_ty = r"Type -> Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -201,9 +225,12 @@ mod infer {
         let given_expr = r"(\a => a) : (Type -> Type) -> (Type -> Type)";
         let expected_ty = r"(Type -> Type) -> (Type -> Type)";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -226,9 +253,12 @@ mod infer {
         let given_expr = r"(\a : Type => a) Type";
         let expected_ty = r"Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -251,9 +281,12 @@ mod infer {
         let given_expr = r"\a : Type => a";
         let expected_ty = r"(a : Type) -> Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -264,9 +297,12 @@ mod infer {
         let given_expr = r"(a : Type) -> a";
         let expected_ty = r"Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -277,9 +313,12 @@ mod infer {
         let given_expr = r"\a : Type => \x : a => x";
         let expected_ty = r"(a : Type) -> a -> a";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -290,9 +329,12 @@ mod infer {
         let given_expr = r"(\a => \x : a => x) : (A : Type) -> A -> A";
         let expected_ty = r"(a : Type) -> a -> a";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -303,9 +345,12 @@ mod infer {
         let given_expr = r"(\a : Type => \x : a => x) Type (Type -> Type)";
         let expected_ty = r"Type -> Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -316,9 +361,12 @@ mod infer {
         let given_expr = r"(\a : Type => \x : a => x) (Type -> Type) (\x : Type => Type)";
         let expected_ty = r"\x : Type => Type";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -335,9 +383,12 @@ mod infer {
                 (a -> b) -> a -> b
         ";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -348,9 +399,12 @@ mod infer {
         let given_expr = r"\a : Type => \b : Type => \x : a => \y : b => x";
         let expected_ty = r"(a : Type) -> (b : Type) -> a -> b -> a";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -361,9 +415,12 @@ mod infer {
         let given_expr = r"\a : Type => \b : Type => \x : a => \y : b => y";
         let expected_ty = r"(a : Type) -> (b : Type) -> a -> b -> b";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -379,9 +436,12 @@ mod infer {
             (a : Type) -> (b : Type) -> (c : Type) -> (a -> b -> c) -> (b -> a -> c)
         ";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -399,9 +459,12 @@ mod infer {
                 (b -> c) -> (a -> b) -> (a -> c)
         ";
 
+        let result = context.infer(&parse(given_expr)).unwrap();
+        println!("{}", result);
+
         assert_eq!(
-            context.infer(&parse(given_expr)).unwrap(),
-            context.normalize(&parse(expected_ty)).unwrap(),
+            result.inferred,
+            context.normalize(&parse(expected_ty)).unwrap().value,
         );
     }
 
@@ -416,8 +479,8 @@ mod infer {
             let expected_ty = r"Type -> Type -> Type";
 
             assert_eq!(
-                context.infer(&parse(given_expr)).unwrap(),
-                context.normalize(&parse(expected_ty)).unwrap(),
+                context.infer(&parse(given_expr)).unwrap().inferred,
+                context.normalize(&parse(expected_ty)).unwrap().value,
             );
         }
 
@@ -435,8 +498,8 @@ mod infer {
             ";
 
             assert_eq!(
-                context.infer(&parse(given_expr)).unwrap(),
-                context.normalize(&parse(expected_ty)).unwrap(),
+                context.infer(&parse(given_expr)).unwrap().inferred,
+                context.normalize(&parse(expected_ty)).unwrap().value,
             );
         }
 
@@ -454,8 +517,8 @@ mod infer {
             ";
 
             assert_eq!(
-                context.infer(&parse(given_expr)).unwrap(),
-                context.normalize(&parse(expected_ty)).unwrap(),
+                context.infer(&parse(given_expr)).unwrap().inferred,
+                context.normalize(&parse(expected_ty)).unwrap().value,
             );
         }
 
@@ -473,8 +536,8 @@ mod infer {
             ";
 
             assert_eq!(
-                context.infer(&parse(given_expr)).unwrap(),
-                context.normalize(&parse(expected_ty)).unwrap(),
+                context.infer(&parse(given_expr)).unwrap().inferred,
+                context.normalize(&parse(expected_ty)).unwrap().value,
             );
         }
     }
