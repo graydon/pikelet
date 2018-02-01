@@ -169,6 +169,41 @@ impl RcTerm {
             },
         }
     }
+
+    pub fn open(&self, x: &RcTerm) -> RcTerm {
+        self.open_at(Debruijn::ZERO, &x)
+    }
+
+    pub fn open_at(&self, level: Debruijn, x: &RcTerm) -> RcTerm {
+        match *self.inner {
+            Term::Ann(ref expr, ref ty) => {
+                Term::Ann(expr.open_at(level, x), ty.open_at(level, x)).into()
+            },
+            Term::Type => self.clone(),
+            Term::Var(ref var) => match var.open_at(level) {
+                true => x.clone(),
+                false => self.clone(),
+            },
+            Term::Lam(Named(ref name, ref param_ty), ref body) => {
+                let param_ty = param_ty.as_ref().map(|param_ty| param_ty.open_at(level, x));
+                let body = body.open_at(level.succ(), x);
+
+                Term::Lam(Named(name.clone(), param_ty), body).into()
+            },
+            Term::Pi(Named(ref name, ref param_ty), ref body) => {
+                let param_ty = param_ty.open_at(level, x);
+                let body = body.open_at(level.succ(), x);
+
+                Term::Pi(Named(name.clone(), param_ty), body).into()
+            },
+            Term::App(ref fn_expr, ref arg_expr) => {
+                let fn_expr = fn_expr.open_at(level, x);
+                let arg = arg_expr.open_at(level, x);
+
+                Term::App(fn_expr, arg).into()
+            },
+        }
+    }
 }
 
 impl RcValue {

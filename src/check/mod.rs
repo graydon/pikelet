@@ -119,6 +119,22 @@ pub struct Context {
     binders: List<Binder>,
 }
 
+fn value_to_term(value: &RcValue) -> RcTerm {
+    match *value.inner {
+        Value::Var(ref var) => Term::Var(var.clone()).into(),
+        Value::App(ref f, ref arg) => Term::App(value_to_term(f), value_to_term(arg)).into(),
+        Value::Type => Term::Type.into(),
+        Value::Lam(Named(ref name, ref param), ref body) => Term::Lam(
+            Named(name.clone(), param.as_ref().map(value_to_term)),
+            value_to_term(body),
+        ).into(),
+        Value::Pi(Named(ref name, ref param), ref body) => Term::Pi(
+            Named(name.clone(), value_to_term(param)),
+            value_to_term(body),
+        ).into(),
+    }
+}
+
 impl Context {
     /// Create a new, empty context
     pub fn new() -> Context {
@@ -226,11 +242,14 @@ impl Context {
             //      Γ ⊢ e₁ e₂ ⇓ v₂
             Term::App(ref fn_expr, ref arg) => {
                 let fn_expr = self.normalize(fn_expr)?; // 1.
-                let arg = self.normalize(arg)?; // 2.
 
                 match *fn_expr.inner {
-                    Value::Lam(_, ref body) => Ok(body.open(&arg)),
-                    _ => Ok(Value::App(fn_expr.clone(), arg).into()),
+                    Value::Lam(_, ref body) => self.normalize(&value_to_term(body).open(arg)), // 2.
+                    _ => {
+                        // Hummmmmm....
+                        let arg = self.normalize(arg)?; // 2.
+                        Ok(Value::App(fn_expr.clone(), arg).into())
+                    },
                 }
             },
         }
@@ -343,13 +362,13 @@ impl Context {
             //  3.  τ₂[x↦e₂] ⇓ τ₃
             // ────────────────────────────── (INFER/APP)
             //      Γ ⊢ e₁ e₂ :↑ τ₃
-            Term::App(ref fn_expr, ref arg_expr) => {
+            Term::App(ref fn_expr, ref arg) => {
                 let fn_type = self.infer(fn_expr)?; // 1.
                 match *fn_type.inner {
-                    Value::Pi(Named(_, ref param_ty), ref ret_ty) => {
-                        self.check(arg_expr, param_ty)?; // 2.
-                        let body_ty = ret_ty.open(&self.normalize(&arg_expr)?); // 3.
-                        Ok(body_ty)
+                    Value::Pi(Named(_, ref param_ty), ref pi_body) => {
+                        self.check(arg, param_ty)?; // 2.
+                        let ty = self.normalize(&value_to_term(pi_body).open(arg))?; // 3.
+                        Ok(ty)
                     },
                     // TODO: More error info
                     _ => Err(TypeError::IllegalApplication),
