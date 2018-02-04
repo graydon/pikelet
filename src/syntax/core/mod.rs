@@ -305,6 +305,23 @@ fn lam_from_concrete(
     term
 }
 
+fn pi_from_concrete(params: &[(Vec<String>, concrete::Term)], body: &concrete::Term) -> RcTerm {
+    let mut term = RcTerm::from_concrete(body);
+
+    for &(ref names, ref ann) in params.iter().rev() {
+        let mut ann = RcTerm::from_concrete(ann);
+
+        for name in names.iter().rev() {
+            let name = Name::User(name.clone());
+            term.close(&name);
+            ann.close(&Name::Abstract);
+            term = Term::Pi(Named(name, ann.clone()), term).into();
+        }
+    }
+
+    term
+}
+
 impl Module {
     /// Convert the module in the concrete syntax to a module in the core syntax
     pub fn from_concrete(module: &concrete::Module) -> Module {
@@ -379,13 +396,7 @@ impl RcTerm {
             concrete::Term::Type => Term::Type.into(),
             concrete::Term::Var(ref x) => Term::Var(Var::Free(Name::User(x.clone()))).into(),
             concrete::Term::Lam(ref params, ref body) => lam_from_concrete(params, body),
-            concrete::Term::Pi(ref name, ref ann, ref body) => {
-                let name = Name::User(name.clone());
-                let mut body = RcTerm::from_concrete(body);
-                body.close(&name);
-
-                Term::Pi(Named(name, RcTerm::from_concrete(ann).into()), body).into()
-            },
+            concrete::Term::Pi(ref params, ref body) => pi_from_concrete(params, body),
             concrete::Term::Arrow(ref ann, ref body) => {
                 let name = Name::Abstract;
                 let mut body = RcTerm::from_concrete(body);

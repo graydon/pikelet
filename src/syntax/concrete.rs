@@ -90,9 +90,9 @@ pub enum Term {
     /// Dependent function types
     ///
     /// ```text
-    /// (x : t1) -> t2
+    /// (t1 : Type) (x y : t1) -> t2
     /// ```
-    Pi(String, Box<Term>, Box<Term>),
+    Pi(Vec<(Vec<String>, Box<Term>)>, Box<Term>),
     /// Non-Dependent function types
     ///
     /// ```text

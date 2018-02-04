@@ -1,5 +1,6 @@
 //! Parser utilities
 
+use lalrpop_util::ParseError as LalrpopError;
 use std::str::FromStr;
 
 use syntax::concrete;
@@ -40,6 +41,57 @@ impl FromStr for concrete::Term {
 
     fn from_str(src: &str) -> Result<concrete::Term, ParseError> {
         grammar::parse_Term(src).map_err(|e| ParseError(format!("{}", e)))
+    }
+}
+
+fn build_pi_type<T>(
+    binders: concrete::Term,
+    body: concrete::Term,
+) -> Result<concrete::Term, LalrpopError<usize, T, &'static str>> {
+    use syntax::concrete::Term;
+
+    match binders {
+        // single binder
+        Term::Parens(term) => {
+            let term = *term; // HACK: see https://github.com/rust-lang/rust/issues/16223
+            match term {
+                Term::Ann(name, ann) => match *name {
+                    Term::Var(name) => Ok(Term::Pi(vec![(vec![name], ann)], Box::new(body))),
+                    Term::App(name, rest) => unimplemented!(),
+                    _ => Err(LalrpopError::User {
+                        error: "identifier expected in pi type", // TODO: better error!
+                    }),
+                },
+                ann => Ok(Term::Arrow(
+                    Box::new(Term::Parens(Box::new(ann))),
+                    Box::new(body),
+                )),
+            }
+        },
+        Term::App(binders, arg) => {
+            let binders = *binders;
+            match binders {
+                Term::Parens(term) => {
+                    let term = *term; // HACK: see https://github.com/rust-lang/rust/issues/16223
+                    match term {
+                        Term::Ann(name, ann) => match *name {
+                            Term::Var(name) => {
+                                Ok(Term::Pi(vec![(vec![name], ann)], Box::new(body)))
+                            },
+                            Term::App(name, rest) => unimplemented!(),
+                            _ => Err(LalrpopError::User {
+                                error: "identifier expected in pi type", // TODO: better error!
+                            }),
+                        },
+                        ann => Ok(Term::Arrow(
+                            Box::new(Term::Parens(Box::new(ann))),
+                            Box::new(body),
+                        )),
+                    }
+                },
+            }
+        },
+        ann => Ok(Term::Arrow(Box::new(ann), Box::new(body))),
     }
 }
 
