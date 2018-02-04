@@ -99,6 +99,10 @@ pub fn pretty_universe() -> StaticDoc {
     Doc::text("Type")
 }
 
+pub fn pretty_hole() -> StaticDoc {
+    Doc::text("_")
+}
+
 pub fn pretty_var(context: Options, var: &Var) -> StaticDoc {
     match context.debug_indices {
         true => Doc::text(format!("{:#}", var)),
@@ -194,8 +198,12 @@ impl ToDoc for Term {
         match *self {
             Term::Ann(ref expr, ref ty) => pretty_ann(context, expr, ty),
             Term::Universe => pretty_universe(),
+            Term::Hole => pretty_hole(),
             Term::Var(ref var) => pretty_var(context, var),
-            Term::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, a.as_ref(), b),
+            Term::Lam(Named(ref n, ref a), ref b) if *a.inner == Term::Hole => {
+                pretty_lam(context, n, None::<&Term>, b)
+            },
+            Term::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, Some(a), b),
             Term::Pi(Named(ref n, ref a), ref b) => pretty_pi(context, n, a, b),
             Term::App(ref f, ref a) => pretty_app(context, f, a),
         }
@@ -212,7 +220,7 @@ impl ToDoc for Value {
     fn to_doc(&self, context: Options) -> StaticDoc {
         match *self {
             Value::Universe => pretty_universe(),
-            Value::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, a.as_ref(), b),
+            Value::Lam(Named(ref n, ref a), ref b) => pretty_lam(context, n, Some(a), b),
             Value::Pi(Named(ref n, ref a), ref b) => pretty_pi(context, n, a, b),
             Value::Var(ref var) => pretty_var(context, var),
             Value::App(ref fn_term, ref arg_term) => pretty_app(context, fn_term, arg_term),
@@ -231,13 +239,10 @@ pub fn pretty_binder(context: Options, name: &Name, binder: &Binder) -> StaticDo
         Binder::Lam(ref ann) => Doc::group(
             Doc::text(r"\")
                 .append(pretty_name(context, name))
-                .append(match ann.as_ref() {
-                    Some(ann) => Doc::space()
-                        .append(Doc::text(":"))
-                        .append(Doc::space())
-                        .append(ann.to_doc(context.with_prec(Prec::PI)).group()),
-                    None => Doc::nil(),
-                }),
+                .append(Doc::space())
+                .append(Doc::text(":"))
+                .append(Doc::space())
+                .append(ann.to_doc(context.with_prec(Prec::LAM)).group()),
         ),
         Binder::Pi(ref ann) => Doc::group(
             Doc::text("(")

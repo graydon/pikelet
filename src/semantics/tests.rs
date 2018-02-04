@@ -38,7 +38,7 @@ mod normalize {
         assert_eq!(
             normalize(&context, &parse(r"\x : Type => x")).unwrap(),
             Value::Lam(
-                Named(x.clone(), Some(RcValue::universe())),
+                Named(x.clone(), RcValue::universe()),
                 Value::Var(Var::Bound(Named(x, Debruijn(0)))).into(),
             ).into(),
         );
@@ -73,9 +73,9 @@ mod normalize {
         assert_eq!(
             normalize(&context, &parse(r"\x : Type -> Type => \y : Type => x y")).unwrap(),
             Value::Lam(
-                Named(x.clone(), Some(ty_arr)),
+                Named(x.clone(), ty_arr),
                 Value::Lam(
-                    Named(y.clone(), Some(RcValue::universe())),
+                    Named(y.clone(), RcValue::universe()),
                     Value::App(
                         Value::Var(Var::Bound(Named(x, Debruijn(1)))).into(),
                         Value::Var(Var::Bound(Named(y, Debruijn(0)))).into(),
@@ -101,7 +101,7 @@ mod normalize {
             Value::Pi(
                 Named(x.clone(), ty_arr),
                 Value::Lam(
-                    Named(y.clone(), Some(RcValue::universe())),
+                    Named(y.clone(), RcValue::universe()),
                     Value::App(
                         Value::Var(Var::Bound(Named(x, Debruijn(1)))).into(),
                         Value::Var(Var::Bound(Named(y, Debruijn(0)))).into(),

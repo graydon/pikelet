@@ -34,10 +34,11 @@ pub struct Definition {
 /// ```text
 /// e,ρ ::= e:ρ         1. annotated terms
 ///       | Type        2. universes
-///       | x           3. variables
-///       | λx:ρ₁.ρ₂    4. lambda abstractions
-///       | Πx:ρ₁.ρ₂    5. dependent function types
-///       | ρ₁ ρ₂       6. term application
+///       | _           3. holes
+///       | x           4. variables
+///       | λx:ρ₁.ρ₂    5. lambda abstractions
+///       | Πx:ρ₁.ρ₂    6. dependent function types
+///       | ρ₁ ρ₂       7. term application
 /// ```
 #[derive(Debug, Clone, PartialEq)]
 pub enum Term {
@@ -45,14 +46,16 @@ pub enum Term {
     Ann(RcTerm, RcTerm), // 1.
     /// Universes
     Universe, // 2.
+    /// Holes
+    Hole, // 3.
     /// A variable
-    Var(Var), // 3.
+    Var(Var), // 4.
     /// Lambda abstractions
-    Lam(Named<Option<RcTerm>>, RcTerm), // 4.
+    Lam(Named<RcTerm>, RcTerm), // 5.
     /// Dependent function types
-    Pi(Named<RcTerm>, RcTerm), // 5.
+    Pi(Named<RcTerm>, RcTerm), // 6.
     /// Term application
-    App(RcTerm, RcTerm), // 6.
+    App(RcTerm, RcTerm), // 7.
 }
 
 impl From<Var> for Term {
@@ -85,7 +88,7 @@ pub enum Value {
     /// Variables
     Var(Var), // 2.
     /// A lambda abstraction
-    Lam(Named<Option<RcValue>>, RcValue), // 3.
+    Lam(Named<RcValue>, RcValue), // 3.
     /// A pi type
     Pi(Named<RcValue>, RcValue), // 4.
     /// Term application
@@ -144,6 +147,10 @@ impl RcTerm {
     pub fn universe() -> RcTerm {
         Term::Universe.into()
     }
+
+    pub fn hole() -> RcTerm {
+        Term::Hole.into()
+    }
 }
 
 impl RcValue {
@@ -162,7 +169,7 @@ impl RcValue {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Binder {
     /// A type introduced after entering a lambda abstraction
-    Lam(Option<RcType>), // 1.
+    Lam(RcType), // 1.
     /// A type introduced after entering a pi type
     Pi(RcType), // 2.
     /// A value and type binding that was introduced by passing over a let binding
@@ -231,10 +238,9 @@ impl RcTerm {
                 expr.close_at(level, name);
                 ty.close_at(level, name);
             },
-            Term::Universe => {},
+            Term::Universe | Term::Hole => {},
             Term::Var(ref mut var) => var.close_at(level, name),
-            Term::Lam(Named(_, None), ref mut body) => body.close_at(level.succ(), name),
-            Term::Lam(Named(_, Some(ref mut ty)), ref mut body) => {
+            Term::Lam(Named(_, ref mut ty), ref mut body) => {
                 ty.close_at(level, name);
                 body.close_at(level.succ(), name);
             },
@@ -263,7 +269,7 @@ impl RcValue {
                 false => self.clone(),
             },
             Value::Lam(Named(ref name, ref param_ty), ref body) => {
-                let param_ty = param_ty.as_ref().map(|param_ty| param_ty.open_at(level, x));
+                let param_ty = param_ty.open_at(level, x);
                 let body = body.open_at(level.succ(), x);
 
                 Value::Lam(Named(name.clone(), param_ty), body).into()
@@ -296,10 +302,10 @@ fn lam_from_concrete(
         let name = Name::User(name.clone());
         term.close(&name);
         term = match *ann {
-            None => Term::Lam(Named(name, None), term).into(),
+            None => Term::Lam(Named(name, RcTerm::hole()), term).into(),
             Some(ref ann) => {
                 let ann = RcTerm::from_concrete(ann).into();
-                Term::Lam(Named(name, Some(ann)), term).into()
+                Term::Lam(Named(name, ann), term).into()
             },
         };
     }
