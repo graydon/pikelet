@@ -128,9 +128,9 @@ pub fn normalize(context: &Context, term: &RcTerm) -> Result<RcValue, InternalEr
 
         // ─────────────────── (EVAL/TYPE)
         //  Γ ⊢ Type ⇓ Type
-        Term::Universe(level) => Ok(Value::Universe(level).into()),
+        Term::Universe(_, level) => Ok(Value::Universe(level).into()),
 
-        Term::Var(ref var) => match *var {
+        Term::Var(_, ref var) => match *var {
             // We should always be substituting bound variables with fresh
             // variables when entering scopes using `unbind`, so if we've
             // encountered one here this is definitely a bug!
@@ -169,7 +169,7 @@ pub fn normalize(context: &Context, term: &RcTerm) -> Result<RcValue, InternalEr
         //  3.  Γ,λx:τ ⊢ e ⇓ v
         // ──────────────────────────────── (EVAL/LAM-ANN)
         //      Γ ⊢ λx:ρ.e ⇓ λx:τ.v
-        Term::Lam(ref lam) => {
+        Term::Lam(_, ref lam) => {
             let (param, body) = lam.clone().unbind();
 
             let ann = match param.inner {
@@ -186,7 +186,7 @@ pub fn normalize(context: &Context, term: &RcTerm) -> Result<RcValue, InternalEr
         //  2.  Γ,Πx:τ ⊢ ρ₂ ⇓ τ₂
         // ─────────────────────────────────── (EVAL/PI-ANN)
         //      Γ ⊢ Πx:ρ₁.ρ₂ ⇓ Πx:τ₁.τ₂
-        Term::Pi(ref pi) => {
+        Term::Pi(_, ref pi) => {
             let (param, body) = pi.clone().unbind();
 
             let ann = normalize(context, &param.inner)?; // 1.
@@ -237,7 +237,7 @@ pub fn check(context: &Context, term: &RcTerm, expected: &RcType) -> Result<RcVa
         //  1.  Γ,Πx:τ₁ ⊢ e ⇐ τ₂ ⤳ v
         // ────────────────────────────────────── (CHECK/LAM)
         //      Γ ⊢ λx.e ⇐ Πx:τ₁.τ₂ ⤳ λx:τ₁.v
-        (&Term::Lam(ref lam), &Value::Pi(ref pi)) => {
+        (&Term::Lam(_, ref lam), &Value::Pi(ref pi)) => {
             let (lam_param, lam_body, pi_param, pi_body) = core::unbind2(lam.clone(), pi.clone());
 
             if lam_param.inner.is_none() {
@@ -256,7 +256,7 @@ pub fn check(context: &Context, term: &RcTerm, expected: &RcType) -> Result<RcVa
             // TODO: We might want to optimise for this case, rather than
             // falling through to `infer` and reunbinding at INFER/LAM
         },
-        (&Term::Lam(_), _) => {
+        (&Term::Lam(_, _), _) => {
             return Err(TypeError::ExpectedFunction {
                 lam_expr: term.clone(),
                 expected: expected.clone(),
@@ -333,12 +333,12 @@ pub fn infer(context: &Context, term: &RcTerm) -> Result<(RcValue, RcType), Type
 
         // ───────────────────────────────── (INFER/TYPE)
         //  Γ ⊢ Typeᵢ ⇒ Typeᵢ₊₁ ⤳ Typeᵢ
-        Term::Universe(level) => Ok((
+        Term::Universe(_, level) => Ok((
             Value::Universe(level).into(),
             Value::Universe(level.succ()).into(),
         )),
 
-        Term::Var(ref var) => match *var {
+        Term::Var(_, ref var) => match *var {
             // We should always be substituting bound variables with fresh
             // variables when entering scopes using `unbind`, so if we've
             // encountered one here this is definitely a bug!
@@ -372,7 +372,7 @@ pub fn infer(context: &Context, term: &RcTerm) -> Result<(RcValue, RcType), Type
         //  3.  Γ,λx:τ₁ ⊢ e ⇒ τ₂ ⤳ v
         // ───────────────────────────────────────── (INFER/LAM)
         //      Γ ⊢ λx:ρ.e ⇒ Πx:τ₁.τ₂ ⤳ λx:τ.v
-        Term::Lam(ref lam) => {
+        Term::Lam(_, ref lam) => {
             let (param, body) = lam.clone().unbind();
 
             match param.inner {
@@ -400,7 +400,7 @@ pub fn infer(context: &Context, term: &RcTerm) -> Result<(RcValue, RcType), Type
         //  4.  k = max(i, j)
         // ────────────────────────────────────────── (INFER/PI)
         //      Γ ⊢ Πx:ρ₁.ρ₂ ⇒ Typeₖ ⤳ Πx:τ₁.τ₂
-        Term::Pi(ref pi) => {
+        Term::Pi(_, ref pi) => {
             let (param, body) = pi.clone().unbind();
 
             let (elab_ann, level_ann) = infer_universe(context, &param.inner)?; // 1.

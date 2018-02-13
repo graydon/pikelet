@@ -13,13 +13,17 @@ fn lam_from_concrete(
     let mut term = core::RcTerm::from_concrete(body);
 
     for &(ref names, ref ann) in params.iter().rev() {
-        for &(_, ref name) in names.iter().rev() {
+        for &(span, ref name) in names.iter().rev() {
             let name = core::Name::User(name.clone());
             term = match *ann {
-                None => core::Term::Lam(core::TermLam::bind(Named::new(name, None), term)).into(),
+                None => {
+                    let lam = core::TermLam::bind(Named::new(name, None), term);
+                    core::Term::Lam(span.lo(), lam).into()
+                },
                 Some(ref ann) => {
                     let ann = core::RcTerm::from_concrete(ann);
-                    core::Term::Lam(core::TermLam::bind(Named::new(name, Some(ann)), term)).into()
+                    let lam = core::TermLam::bind(Named::new(name, Some(ann)), term);
+                    core::Term::Lam(span.lo(), lam).into()
                 },
             };
         }
@@ -36,12 +40,11 @@ fn pi_from_concrete(
     let ann = core::RcTerm::from_concrete(ann);
     let mut term = core::RcTerm::from_concrete(body);
 
-    for &(_, ref name) in param_names.iter().rev() {
+    for &(span, ref name) in param_names.iter().rev() {
         // This could be wrong... :/
-        term = core::Term::Pi(core::TermPi::bind(
-            Named::new(core::Name::User(name.clone()), ann.clone()),
-            term,
-        )).into();
+        let param = Named::new(core::Name::User(name.clone()), ann.clone());
+        let pi = core::TermPi::bind(param, term);
+        term = core::Term::Pi(span.lo(), pi).into();
     }
 
     term
@@ -127,25 +130,25 @@ impl<'a> FromConcrete<&'a concrete::Term> for core::RcTerm {
 
                 core::Term::Ann(expr, ty).into()
             },
-            concrete::Term::Universe(_, None) => core::Term::Universe(core::Level::ZERO).into(),
-            concrete::Term::Universe(_, Some(level)) => {
-                core::Term::Universe(core::Level(level)).into()
+            concrete::Term::Universe(span, level) => {
+                core::Term::Universe(span, level.map_or(core::Level::ZERO, core::Level)).into()
             },
-            concrete::Term::Var(_, ref x) => {
+            concrete::Term::Var(span, ref x) => {
                 let var = Var::Free(core::Name::User(x.clone()));
 
-                core::Term::Var(var).into()
+                core::Term::Var(span, var).into()
             },
             concrete::Term::Lam(_, ref params, ref body) => lam_from_concrete(params, body),
             concrete::Term::Pi(_, (ref names, ref ann), ref body) => {
                 pi_from_concrete(names, ann, body)
             },
             concrete::Term::Arrow(ref ann, ref body) => {
+                let start = ann.span().hi();
                 let name = core::Name::fresh(None::<&str>);
                 let ann = core::RcTerm::from_concrete(ann);
                 let body = core::RcTerm::from_concrete(body);
 
-                core::Term::Pi(core::TermPi::bind(Named::new(name, ann), body)).into()
+                core::Term::Pi(start, core::TermPi::bind(Named::new(name, ann), body)).into()
             },
             concrete::Term::App(ref fn_expr, ref arg) => {
                 let fn_expr = core::RcTerm::from_concrete(fn_expr);
@@ -159,6 +162,8 @@ impl<'a> FromConcrete<&'a concrete::Term> for core::RcTerm {
 
 #[cfg(test)]
 mod from_concrete {
+    use source::pos::BytePos;
+
     use super::*;
 
     fn parse(src: &str) -> core::RcTerm {
@@ -183,27 +188,33 @@ mod from_concrete {
 
         #[test]
         fn var() {
-            assert_eq!(parse(r"x"), Term::Var(Var::Free(Name::user("x"))).into());
+            assert_eq!(
+                parse(r"x"),
+                Term::Var(Span::start(), Var::Free(Name::user("x"))).into()
+            );
         }
 
         #[test]
         fn var_kebab_case() {
             assert_eq!(
                 parse(r"or-elim"),
-                Term::Var(Var::Free(Name::user("or-elim"))).into(),
+                Term::Var(Span::start(), Var::Free(Name::user("or-elim"))).into(),
             );
         }
 
         #[test]
         fn ty() {
-            assert_eq!(parse(r"Type"), Term::Universe(Level::ZERO).into());
+            assert_eq!(
+                parse(r"Type"),
+                Term::Universe(Span::start(), Level::ZERO).into()
+            );
         }
 
         #[test]
         fn ty_level() {
             assert_eq!(
                 parse(r"Type 2"),
-                Term::Universe(Level::ZERO.succ().succ()).into()
+                Term::Universe(Span::start(), Level::ZERO.succ().succ()).into()
             );
         }
 
@@ -212,8 +223,8 @@ mod from_concrete {
             assert_eq!(
                 parse(r"Type : Type"),
                 Term::Ann(
-                    Term::Universe(Level::ZERO).into(),
-                    Term::Universe(Level::ZERO).into()
+                    Term::Universe(Span::start(), Level::ZERO).into(),
+                    Term::Universe(Span::start(), Level::ZERO).into()
                 ).into(),
             );
         }
@@ -223,10 +234,10 @@ mod from_concrete {
             assert_eq!(
                 parse(r"Type : Type : Type"),
                 Term::Ann(
-                    Term::Universe(Level::ZERO).into(),
+                    Term::Universe(Span::start(), Level::ZERO).into(),
                     Term::Ann(
-                        Term::Universe(Level::ZERO).into(),
-                        Term::Universe(Level::ZERO).into()
+                        Term::Universe(Span::start(), Level::ZERO).into(),
+                        Term::Universe(Span::start(), Level::ZERO).into()
                     ).into(),
                 ).into(),
             );
@@ -237,10 +248,10 @@ mod from_concrete {
             assert_eq!(
                 parse(r"Type : (Type : Type)"),
                 Term::Ann(
-                    Term::Universe(Level::ZERO).into(),
+                    Term::Universe(Span::start(), Level::ZERO).into(),
                     Term::Ann(
-                        Term::Universe(Level::ZERO).into(),
-                        Term::Universe(Level::ZERO).into()
+                        Term::Universe(Span::start(), Level::ZERO).into(),
+                        Term::Universe(Span::start(), Level::ZERO).into()
                     ).into(),
                 ).into(),
             );
@@ -252,12 +263,12 @@ mod from_concrete {
                 parse(r"(Type : Type) : (Type : Type)"),
                 Term::Ann(
                     Term::Ann(
-                        Term::Universe(Level::ZERO).into(),
-                        Term::Universe(Level::ZERO).into()
+                        Term::Universe(Span::start(), Level::ZERO).into(),
+                        Term::Universe(Span::start(), Level::ZERO).into()
                     ).into(),
                     Term::Ann(
-                        Term::Universe(Level::ZERO).into(),
-                        Term::Universe(Level::ZERO).into()
+                        Term::Universe(Span::start(), Level::ZERO).into(),
+                        Term::Universe(Span::start(), Level::ZERO).into()
                     ).into(),
                 ).into(),
             );
@@ -269,18 +280,27 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"\x : Type -> Type => x"),
-                Term::Lam(TermLam::bind(
-                    Named::new(
-                        x.clone(),
-                        Some(
-                            Term::Pi(TermPi::bind(
-                                Named::new(Name::user("_"), Term::Universe(Level::ZERO).into()),
-                                Term::Universe(Level::ZERO).into(),
-                            )).into()
+                Term::Lam(
+                    BytePos(0),
+                    TermLam::bind(
+                        Named::new(
+                            x.clone(),
+                            Some(
+                                Term::Pi(
+                                    BytePos(0),
+                                    TermPi::bind(
+                                        Named::new(
+                                            Name::user("_"),
+                                            Term::Universe(Span::start(), Level::ZERO).into()
+                                        ),
+                                        Term::Universe(Span::start(), Level::ZERO).into(),
+                                    )
+                                ).into()
+                            ),
                         ),
-                    ),
-                    Term::Var(Var::Free(x)).into(),
-                )).into(),
+                        Term::Var(Span::start(), Var::Free(x)).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -291,18 +311,24 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"\x : (\y => y) => x"),
-                Term::Lam(TermLam::bind(
-                    Named::new(
-                        x.clone(),
-                        Some(
-                            Term::Lam(TermLam::bind(
-                                Named::new(y.clone(), None),
-                                Term::Var(Var::Free(y)).into(),
-                            )).into()
+                Term::Lam(
+                    BytePos(0),
+                    TermLam::bind(
+                        Named::new(
+                            x.clone(),
+                            Some(
+                                Term::Lam(
+                                    BytePos(0),
+                                    TermLam::bind(
+                                        Named::new(y.clone(), None),
+                                        Term::Var(Span::start(), Var::Free(y)).into(),
+                                    )
+                                ).into()
+                            ),
                         ),
-                    ),
-                    Term::Var(Var::Free(x)).into(),
-                )).into(),
+                        Term::Var(Span::start(), Var::Free(x)).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -313,13 +339,25 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"\(x y : Type) => x"),
-                Term::Lam(TermLam::bind(
-                    Named::new(x.clone(), Some(Term::Universe(Level::ZERO).into())),
-                    Term::Lam(TermLam::bind(
-                        Named::new(y, Some(Term::Universe(Level::ZERO).into())),
-                        Term::Var(Var::Free(x)).into(),
-                    )).into(),
-                )).into(),
+                Term::Lam(
+                    BytePos(0),
+                    TermLam::bind(
+                        Named::new(
+                            x.clone(),
+                            Some(Term::Universe(Span::start(), Level::ZERO).into())
+                        ),
+                        Term::Lam(
+                            BytePos(0),
+                            TermLam::bind(
+                                Named::new(
+                                    y,
+                                    Some(Term::Universe(Span::start(), Level::ZERO).into())
+                                ),
+                                Term::Var(Span::start(), Var::Free(x)).into(),
+                            )
+                        ).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -327,10 +365,16 @@ mod from_concrete {
         fn arrow() {
             assert_eq!(
                 parse(r"Type -> Type"),
-                Term::Pi(TermPi::bind(
-                    Named::new(Name::user("_"), Term::Universe(Level::ZERO).into()),
-                    Term::Universe(Level::ZERO).into(),
-                )).into(),
+                Term::Pi(
+                    BytePos(0),
+                    TermPi::bind(
+                        Named::new(
+                            Name::user("_"),
+                            Term::Universe(Span::start(), Level::ZERO).into()
+                        ),
+                        Term::Universe(Span::start(), Level::ZERO).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -340,16 +384,25 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"(x : Type -> Type) -> x"),
-                Term::Pi(TermPi::bind(
-                    Named::new(
-                        x.clone(),
-                        Term::Pi(TermPi::bind(
-                            Named::new(Name::user("_"), Term::Universe(Level::ZERO).into()),
-                            Term::Universe(Level::ZERO).into(),
-                        )).into(),
-                    ),
-                    Term::Var(Var::Free(x)).into(),
-                )).into(),
+                Term::Pi(
+                    BytePos(0),
+                    TermPi::bind(
+                        Named::new(
+                            x.clone(),
+                            Term::Pi(
+                                BytePos(0),
+                                TermPi::bind(
+                                    Named::new(
+                                        Name::user("_"),
+                                        Term::Universe(Span::start(), Level::ZERO).into()
+                                    ),
+                                    Term::Universe(Span::start(), Level::ZERO).into(),
+                                )
+                            ).into(),
+                        ),
+                        Term::Var(Span::start(), Var::Free(x)).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -360,13 +413,19 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"(x y : Type) -> x"),
-                Term::Pi(TermPi::bind(
-                    Named::new(x.clone(), Term::Universe(Level::ZERO).into()),
-                    Term::Pi(TermPi::bind(
-                        Named::new(y, Term::Universe(Level::ZERO).into()),
-                        Term::Var(Var::Free(x)).into(),
-                    )).into(),
-                )).into(),
+                Term::Pi(
+                    BytePos(0),
+                    TermPi::bind(
+                        Named::new(x.clone(), Term::Universe(Span::start(), Level::ZERO).into()),
+                        Term::Pi(
+                            BytePos(0),
+                            TermPi::bind(
+                                Named::new(y, Term::Universe(Span::start(), Level::ZERO).into()),
+                                Term::Var(Span::start(), Var::Free(x)).into(),
+                            )
+                        ).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -376,13 +435,22 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"(x : Type) -> x -> x"),
-                Term::Pi(TermPi::bind(
-                    Named::new(x.clone(), Term::Universe(Level::ZERO).into()),
-                    Term::Pi(TermPi::bind(
-                        Named::new(Name::user("_"), Term::Var(Var::Free(x.clone())).into(),),
-                        Term::Var(Var::Free(x)).into(),
-                    )).into(),
-                )).into(),
+                Term::Pi(
+                    BytePos(0),
+                    TermPi::bind(
+                        Named::new(x.clone(), Term::Universe(Span::start(), Level::ZERO).into()),
+                        Term::Pi(
+                            BytePos(0),
+                            TermPi::bind(
+                                Named::new(
+                                    Name::user("_"),
+                                    Term::Var(Span::start(), Var::Free(x.clone())).into(),
+                                ),
+                                Term::Var(Span::start(), Var::Free(x)).into(),
+                            )
+                        ).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -393,24 +461,39 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"\(x : Type -> Type) (y : Type) => x y"),
-                Term::Lam(TermLam::bind(
-                    Named::new(
-                        x.clone(),
-                        Some(
-                            Term::Pi(TermPi::bind(
-                                Named::new(Name::user("_"), Term::Universe(Level::ZERO).into()),
-                                Term::Universe(Level::ZERO).into(),
-                            )).into(),
+                Term::Lam(
+                    BytePos(0),
+                    TermLam::bind(
+                        Named::new(
+                            x.clone(),
+                            Some(
+                                Term::Pi(
+                                    BytePos(0),
+                                    TermPi::bind(
+                                        Named::new(
+                                            Name::user("_"),
+                                            Term::Universe(Span::start(), Level::ZERO).into()
+                                        ),
+                                        Term::Universe(Span::start(), Level::ZERO).into(),
+                                    )
+                                ).into(),
+                            ),
                         ),
-                    ),
-                    Term::Lam(TermLam::bind(
-                        Named::new(y.clone(), Some(Term::Universe(Level::ZERO).into())),
-                        Term::App(
-                            Term::Var(Var::Free(x)).into(),
-                            Term::Var(Var::Free(y)).into(),
+                        Term::Lam(
+                            BytePos(0),
+                            TermLam::bind(
+                                Named::new(
+                                    y.clone(),
+                                    Some(Term::Universe(Span::start(), Level::ZERO).into())
+                                ),
+                                Term::App(
+                                    Term::Var(Span::start(), Var::Free(x)).into(),
+                                    Term::Var(Span::start(), Var::Free(y)).into(),
+                                ).into(),
+                            )
                         ).into(),
-                    )).into(),
-                )).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -421,13 +504,25 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"\(a : Type) (x : a) => x"),
-                Term::Lam(TermLam::bind(
-                    Named::new(a.clone(), Some(Term::Universe(Level::ZERO).into())),
-                    Term::Lam(TermLam::bind(
-                        Named::new(x.clone(), Some(Term::Var(Var::Free(a)).into()),),
-                        Term::Var(Var::Free(x)).into(),
-                    )).into(),
-                )).into(),
+                Term::Lam(
+                    BytePos(0),
+                    TermLam::bind(
+                        Named::new(
+                            a.clone(),
+                            Some(Term::Universe(Span::start(), Level::ZERO).into())
+                        ),
+                        Term::Lam(
+                            BytePos(0),
+                            TermLam::bind(
+                                Named::new(
+                                    x.clone(),
+                                    Some(Term::Var(Span::start(), Var::Free(a)).into()),
+                                ),
+                                Term::Var(Span::start(), Var::Free(x)).into(),
+                            )
+                        ).into(),
+                    )
+                ).into(),
             );
         }
 
@@ -437,13 +532,22 @@ mod from_concrete {
 
             assert_eq!(
                 parse(r"(a : Type) -> a -> a"),
-                Term::Pi(TermPi::bind(
-                    Named::new(a.clone(), Term::Universe(Level::ZERO).into()),
-                    Term::Pi(TermPi::bind(
-                        Named::new(Name::user("_"), Term::Var(Var::Free(a.clone())).into(),),
-                        Term::Var(Var::Free(a)).into(),
-                    )).into(),
-                )).into(),
+                Term::Pi(
+                    BytePos(0),
+                    TermPi::bind(
+                        Named::new(a.clone(), Term::Universe(Span::start(), Level::ZERO).into()),
+                        Term::Pi(
+                            BytePos(0),
+                            TermPi::bind(
+                                Named::new(
+                                    Name::user("_"),
+                                    Term::Var(Span::start(), Var::Free(a.clone())).into(),
+                                ),
+                                Term::Var(Span::start(), Var::Free(a)).into(),
+                            )
+                        ).into(),
+                    )
+                ).into(),
             );
         }
 

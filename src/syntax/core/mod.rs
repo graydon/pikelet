@@ -1,6 +1,7 @@
 //! The core syntax of the language
 
 use rpds::List;
+use source::pos::{BytePos, Span};
 use std::fmt;
 use std::rc::Rc;
 
@@ -122,15 +123,27 @@ pub enum Term {
     /// A term annotated with a type
     Ann(RcTerm, RcTerm), // 1.
     /// Universes
-    Universe(Level), // 2.
+    Universe(Span, Level), // 2.
     /// A variable
-    Var(Var<Name>), // 3.
+    Var(Span, Var<Name>), // 3.
     /// Lambda abstractions
-    Lam(TermLam), // 4.
+    Lam(BytePos, TermLam), // 4.
     /// Dependent function types
-    Pi(TermPi), // 5.
+    Pi(BytePos, TermPi), // 5.
     /// Term application
     App(RcTerm, RcTerm), // 6.
+}
+
+impl Term {
+    pub fn span(&self) -> Span {
+        match *self {
+            Term::Ann(ref term, ref ty) => term.inner.span().to(ty.inner.span()),
+            Term::Universe(span, _) | Term::Var(span, _) => span,
+            Term::Lam(start, ref lam) => Span::new(start, lam.unsafe_body.inner.span().hi()),
+            Term::Pi(start, ref pi) => Span::new(start, pi.unsafe_body.inner.span().hi()),
+            Term::App(ref fn_term, ref arg) => fn_term.inner.span().to(arg.inner.span()),
+        }
+    }
 }
 
 impl fmt::Display for Term {

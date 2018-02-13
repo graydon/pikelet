@@ -1,3 +1,5 @@
+use source::pos::Span;
+
 use syntax::translation::FromConcrete;
 
 use super::*;
@@ -299,7 +301,7 @@ mod infer {
         assert_eq!(
             infer(&context, &parse(given_expr)),
             Err(TypeError::NotAFunctionType {
-                expr: Term::Universe(Level::ZERO).into(),
+                expr: Term::Universe(Span::start(), Level::ZERO).into(),
                 found: Value::Universe(Level::ZERO.succ()).into(),
             }),
         )
